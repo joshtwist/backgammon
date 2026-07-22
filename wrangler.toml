@@ -1,0 +1,19 @@
+name = "backgammon"
+main = "src/server/index.ts"
+compatibility_date = "2025-04-01"
+
+# Dev-only env vars (TEST_HOOKS etc.) live in .dev.vars, which is
+# gitignored and never deployed. Production gets no vars here.
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+
+[durable_objects]
+bindings = [
+  { name = "GAME_ROOM", class_name = "GameRoom" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["GameRoom"]

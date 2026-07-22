@@ -1,0 +1,73 @@
+name: Deploy
+
+# Auto-deploys the Worker + SPA to Cloudflare on every push to main.
+# Can also be run manually from the Actions tab via workflow_dispatch.
+#
+# Required repo secrets:
+#   CLOUDFLARE_API_TOKEN — create at Cloudflare dashboard → My Profile
+#     → API Tokens → "Edit Cloudflare Workers" template. The scoped
+#     token can read + deploy Workers and Durable Objects for your
+#     account; no extra permissions needed.
+#   CLOUDFLARE_ACCOUNT_ID — found on the right side of any Cloudflare
+#     dashboard page (Workers & Pages → Overview shows it). Technically
+#     optional if the token is already scoped to a single account, but
+#     setting it explicitly avoids ambiguity.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Don't let two deploys race; cancel older in-flight runs on the same
+# ref so the latest commit always wins.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and deploy to Cloudflare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        # Picks up the version from package.json's `packageManager` field.
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Worker types
+        # worker-configuration.d.ts is gitignored and regenerated from
+        # wrangler.toml. Must run before typecheck or the Worker tsc
+        # pass can't resolve the Env bindings.
+        run: pnpm types
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Engine unit tests
+        # The backgammon rules engine is pure TypeScript with a full
+        # Vitest suite — cheap to run and the main correctness gate.
+        run: pnpm test:unit
+
+      - name: Build SPA
+        run: pnpm build
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # No `command:` needed — the action runs `wrangler deploy`
+          # by default, which picks up wrangler.toml (Worker + DO
+          # migration + static assets binding all in one shot).
