@@ -69,9 +69,13 @@ pnpm typecheck      # client + worker tsconfigs
 ## Deployment
 
 ```bash
-pnpm deploy         # build the SPA + wrangler deploy (worker, DO
+pnpm run deploy     # build the SPA + wrangler deploy (worker, DO
                     # migration, static assets in one shot)
 ```
+
+(Note the `run` — bare `pnpm deploy` is pnpm's own workspace command.)
+
+Live at https://backgammon.molmorg.workers.dev
 
 First-time setup: `pnpm wrangler login`, then `pnpm types` to generate
 `worker-configuration.d.ts` (gitignored).
