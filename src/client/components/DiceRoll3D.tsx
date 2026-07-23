@@ -1,16 +1,24 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import type { Color, DicePair } from "../../shared/types.ts";
+import type { Color, DicePair, Die } from "../../shared/types.ts";
 import { DieFace } from "./Dice.tsx";
 
 /**
- * WebGL dice-roll theater: two 3D dice tumble in across the board and
- * settle showing the (server-authoritative) rolled values. No physics
- * engine — the motion is scripted and the resting orientation is solved
- * directly, so the dice always land on the correct faces.
+ * WebGL dice-roll theater: two 3D dice roll in from off-screen and settle
+ * FLAT with the (server-authoritative) rolled value straight up.
  *
- * If a WebGL context can't be created (rare, old devices), we fall back
- * to the flat 2D dice so the reveal still happens.
+ * The motion is a genuine roll, solved so it can never need a correction:
+ * the resting orientation is fixed (value up, square), and we roll the die
+ * *backwards* from there by a whole number of quarter-turns about a
+ * horizontal axis. Rotating an axis-aligned cube by 90° multiples about a
+ * principal horizontal axis keeps it axis-aligned, so the die is square at
+ * every quarter-turn and lands dead flat on the correct face — no end
+ * slerp. Position and rotation share the same eased progress, so the die
+ * rolls (rather than glides) to a stop, and its centre bobs up on each
+ * edge-pivot the way a real die does. Only the off-screen start distance
+ * is randomised, so every roll reads consistently but never identically.
+ *
+ * Falls back to flat 2D dice if a WebGL context can't be created.
  */
 
 // BoxGeometry face order is [+X, -X, +Y, -Y, +Z, -Z]. Assign values so
@@ -34,7 +42,6 @@ const PIP_CELLS: Record<number, number[]> = {
   6: [0, 2, 3, 5, 6, 8],
 };
 
-/** Draw one die face (value's pips on an ivory ground) to a texture. */
 function faceTexture(value: number): THREE.CanvasTexture {
   const S = 160;
   const canvas = document.createElement("canvas");
@@ -44,8 +51,7 @@ function faceTexture(value: number): THREE.CanvasTexture {
 
   ctx.fillStyle = "#f4eddc";
   ctx.fillRect(0, 0, S, S);
-  // Soft inner border so edges read as a physical die.
-  ctx.strokeStyle = "rgba(0,0,0,0.10)";
+  ctx.strokeStyle = "rgba(0,0,0,0.12)";
   ctx.lineWidth = 6;
   ctx.strokeRect(3, 3, S - 6, S - 6);
 
@@ -68,35 +74,35 @@ function faceTexture(value: number): THREE.CanvasTexture {
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
+// Tumble axis: horizontal, along +X. Dice roll along Z (toward the board
+// centre), pivoting over this axis — a principal axis, so 90° multiples
+// keep the cube square.
+const TUMBLE_AXIS = new THREE.Vector3(1, 0, 0);
 
-/** Quaternion that lands `value` face-up, with an added yaw for variety. */
-function restQuaternion(value: number, yaw: number): THREE.Quaternion {
+/** Quaternion that rests `value` dead flat, face-up and square. */
+function restQuaternion(value: number): THREE.Quaternion {
   const normal = new THREE.Vector3(...FACE_NORMALS[value]);
-  const align = new THREE.Quaternion().setFromUnitVectors(normal, UP);
-  const yawQ = new THREE.Quaternion().setFromAxisAngle(UP, yaw);
-  return yawQ.multiply(align);
+  return new THREE.Quaternion().setFromUnitVectors(normal, UP);
 }
 
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
+const DIE = 0.98;
+const REST_Y = DIE / 2; // sitting on the felt at y = 0
+const REST_X = 0.82;
+const ROLL_MS = 700;
+const POP_MS = 150;
+const HALF_PI = Math.PI / 2;
+
 interface DieAnim {
   mesh: THREE.Mesh;
-  startX: number;
-  startZ: number;
+  shadow: THREE.Mesh;
   restX: number;
-  restZ: number;
-  spinAxis: THREE.Vector3;
-  spinSpeed: number;
-  spin: THREE.Quaternion;
-  settleFrom: THREE.Quaternion | null;
-  rest: THREE.Quaternion;
+  startZ: number;
+  total: number; // signed total tumble angle (a multiple of 90°)
+  qStart: THREE.Quaternion;
+  tmp: THREE.Quaternion;
 }
-
-const ROLL_MS = 1150;
-const SETTLE_MS = 700;
-const REST_Y = 0.55;
-const DIE = 1.05;
-const REST_X = 0.85;
 
 interface DiceRoll3DProps {
   dice: DicePair;
@@ -134,25 +140,25 @@ export function DiceRoll3D({ dice, roller, myColor }: DiceRoll3DProps) {
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(32, width / height, 0.1, 100);
-    camera.position.set(0, 9, 2.5);
+    // Fairly top-down so a flat die reads as "value straight up", with just
+    // enough tilt to keep the 3D form legible.
+    camera.position.set(0, 9.4, 1.9);
     camera.lookAt(0, 0, 0);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.85));
-    const key = new THREE.DirectionalLight(0xffffff, 1.5);
-    key.position.set(3, 8, 5);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+    const key = new THREE.DirectionalLight(0xffffff, 1.6);
+    key.position.set(3, 9, 5);
     scene.add(key);
     const rim = new THREE.DirectionalLight(0xffe0a0, 0.5);
     rim.position.set(-4, 3, -2);
     scene.add(rim);
 
-    // A soft shadow blob under each die (a plane with a radial-gradient
-    // texture) sells the contact without a full shadow pass.
     const shadowTex = (() => {
       const c = document.createElement("canvas");
       c.width = c.height = 128;
       const g = c.getContext("2d")!;
       const grad = g.createRadialGradient(64, 64, 4, 64, 64, 60);
-      grad.addColorStop(0, "rgba(0,0,0,0.45)");
+      grad.addColorStop(0, "rgba(0,0,0,0.5)");
       grad.addColorStop(1, "rgba(0,0,0,0)");
       g.fillStyle = grad;
       g.fillRect(0, 0, 128, 128);
@@ -165,23 +171,22 @@ export function DiceRoll3D({ dice, roller, myColor }: DiceRoll3DProps) {
       (v) =>
         new THREE.MeshStandardMaterial({
           map: faceTexture(v),
-          roughness: 0.45,
-          metalness: 0.05,
+          roughness: 0.4,
+          metalness: 0.04,
         }),
     );
     const geometry = new THREE.BoxGeometry(DIE, DIE, DIE);
 
-    // Roll direction: the roller's dice sweep in from their own side.
-    const fromNear = roller === myColor;
-    const startZ = fromNear ? 3.5 : -3.5;
+    // Dice roll in from the roller's edge of the board toward the centre.
+    const entrySign = roller === myColor ? 1 : -1;
 
-    const dice3d: DieAnim[] = dice.map((value, i) => {
+    const dice3d: DieAnim[] = (dice as readonly Die[]).map((value, i) => {
       const mesh = new THREE.Mesh(geometry, materials);
       const restX = i === 0 ? -REST_X : REST_X;
       scene.add(mesh);
 
       const shadow = new THREE.Mesh(
-        new THREE.PlaneGeometry(DIE * 1.7, DIE * 1.7),
+        new THREE.PlaneGeometry(DIE * 1.6, DIE * 1.6),
         new THREE.MeshBasicMaterial({
           map: shadowTex,
           transparent: true,
@@ -191,75 +196,65 @@ export function DiceRoll3D({ dice, roller, myColor }: DiceRoll3DProps) {
       shadow.rotation.x = -Math.PI / 2;
       shadow.position.set(restX, 0.02, 0);
       scene.add(shadow);
-      mesh.userData.shadow = shadow;
 
-      // Deterministic-enough variety without Math.random dependence on
-      // anything the server cares about.
-      const seed = value * 7 + i * 13;
-      const axis = new THREE.Vector3(
-        Math.sin(seed) * 0.6 + 0.4,
-        Math.cos(seed * 1.3),
-        Math.sin(seed * 0.7) * 0.6 + 0.3,
-      ).normalize();
+      // Randomise only the off-screen start distance → how far it rolls.
+      const dist = 5.5 + Math.random() * 2.5;
+      const startZ = entrySign * dist;
+      // Whole quarter-turns matched to the distance so it rolls (no slide).
+      const quarters = Math.max(4, Math.round(dist / DIE));
+      // Rolling toward the centre (−entrySign in Z) tumbles this way:
+      const total = -entrySign * quarters * HALF_PI;
+      const rest = restQuaternion(value);
+      const qStart = new THREE.Quaternion()
+        .setFromAxisAngle(TUMBLE_AXIS, -total)
+        .multiply(rest);
 
-      return {
-        mesh,
-        startX: -4 - i * 0.6,
-        startZ,
-        restX,
-        restZ: 0,
-        spinAxis: axis,
-        spinSpeed: 14 + (i === 0 ? 0 : 2),
-        spin: new THREE.Quaternion(),
-        settleFrom: null,
-        rest: restQuaternion(value, (i === 0 ? 0.25 : -0.3)),
-      };
+      return { mesh, shadow, restX, startZ, total, qStart, tmp: new THREE.Quaternion() };
     });
 
     let raf = 0;
     const start = performance.now();
-    const delta = new THREE.Quaternion();
+    const spin = new THREE.Quaternion();
 
     const frame = (now: number) => {
       const t = now - start;
+      const rolling = Math.min(1, t / ROLL_MS);
+      const e = easeOutCubic(rolling);
 
       for (const d of dice3d) {
-        if (t < ROLL_MS) {
-          const p = t / ROLL_MS;
-          const e = easeOutCubic(p);
-          d.mesh.position.x = THREE.MathUtils.lerp(d.startX, d.restX, e);
-          d.mesh.position.z = THREE.MathUtils.lerp(d.startZ, d.restZ, e);
-          const bounce = Math.abs(Math.sin(p * Math.PI * 2.5)) * (1 - p) * 1.5;
-          d.mesh.position.y = REST_Y + bounce;
+        // Orientation: fixed tumble, always ending square on the value.
+        spin.setFromAxisAngle(TUMBLE_AXIS, d.total * e);
+        d.mesh.quaternion.copy(spin).multiply(d.qStart);
 
-          const dt = Math.min(0.05, (t > 16 ? 16 : t) / 1000);
-          delta.setFromAxisAngle(d.spinAxis, d.spinSpeed * (1 - p) * dt);
-          d.spin.multiply(delta);
-          d.mesh.quaternion.copy(d.spin);
+        // Position rolls in lockstep with the rotation (shared `e`).
+        d.mesh.position.x = d.restX;
+        d.mesh.position.z = THREE.MathUtils.lerp(d.startZ, 0, e);
+
+        // Authentic edge-pivot bob: centre rises toward each 45° then
+        // drops flat again at every quarter-turn, and is exactly flat at
+        // the end (angle is a whole multiple of 90°).
+        const ang = Math.abs(d.total) * e;
+        const w = ang % HALF_PI;
+        const bob = (DIE / 2) * (Math.cos(w) + Math.sin(w)) - DIE / 2;
+        d.mesh.position.y = REST_Y + bob;
+
+        // A quick squash-pop on landing.
+        if (t > ROLL_MS && t < ROLL_MS + POP_MS) {
+          const pop = 1 + Math.sin(((t - ROLL_MS) / POP_MS) * Math.PI) * 0.11;
+          d.mesh.scale.set(pop, 1 / pop, pop);
         } else {
-          if (!d.settleFrom) d.settleFrom = d.mesh.quaternion.clone();
-          const p = Math.min(1, (t - ROLL_MS) / SETTLE_MS);
-          const e = easeOutCubic(p);
-          d.mesh.quaternion.slerpQuaternions(d.settleFrom, d.rest, e);
-          d.mesh.position.x = d.restX;
-          d.mesh.position.z = 0;
-          // Tiny landing settle.
-          d.mesh.position.y = REST_Y + Math.max(0, Math.sin(p * Math.PI) * 0.12 * (1 - p) * 4 * (1 - e));
+          d.mesh.scale.setScalar(1);
         }
 
-        const shadow = d.mesh.userData.shadow as THREE.Mesh;
-        shadow.position.x = d.mesh.position.x;
         const lift = d.mesh.position.y - REST_Y;
-        const s = 1 - Math.min(0.5, lift * 0.25);
-        shadow.scale.setScalar(s);
-        (shadow.material as THREE.MeshBasicMaterial).opacity =
-          0.9 * Math.max(0.3, 1 - lift * 0.4);
+        d.shadow.position.z = d.mesh.position.z;
+        d.shadow.scale.setScalar(1 - Math.min(0.5, lift * 0.4));
+        (d.shadow.material as THREE.MeshBasicMaterial).opacity =
+          0.9 * Math.max(0.3, 1 - lift * 0.7);
       }
 
       renderer.render(scene, camera);
-      if (t < ROLL_MS + SETTLE_MS + 400) {
-        raf = requestAnimationFrame(frame);
-      }
+      if (t < ROLL_MS + 900) raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
 
@@ -272,9 +267,8 @@ export function DiceRoll3D({ dice, roller, myColor }: DiceRoll3DProps) {
       }
       shadowTex.dispose();
       for (const d of dice3d) {
-        const shadow = d.mesh.userData.shadow as THREE.Mesh;
-        shadow.geometry.dispose();
-        (shadow.material as THREE.Material).dispose();
+        d.shadow.geometry.dispose();
+        (d.shadow.material as THREE.Material).dispose();
       }
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) {
@@ -293,5 +287,9 @@ export function DiceRoll3D({ dice, roller, myColor }: DiceRoll3DProps) {
     );
   }
 
-  return <div ref={mountRef} className="absolute inset-0" data-testid="dice-3d" />;
+  return (
+    <div ref={mountRef} className="absolute inset-0" data-testid="dice-3d" />
+  );
 }
+
+export default DiceRoll3D;

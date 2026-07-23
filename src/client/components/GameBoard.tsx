@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { motion, AnimatePresence, useAnimationControls } from "framer-motion";
 import type { PanInfo } from "framer-motion";
 import { BAR, OFF } from "../../shared/types.ts";
@@ -13,8 +21,11 @@ import {
 } from "../lib/impatience.ts";
 import { Checker } from "./Checker.tsx";
 import { DiceTray } from "./DiceTray.tsx";
-import { DiceRoll3D } from "./DiceRoll3D.tsx";
 import { PlayerHUD } from "./PlayerHUD.tsx";
+
+// three.js is heavy; keep it out of the initial bundle and load the 3D
+// dice as a separate chunk (preloaded on mount, below).
+const DiceRoll3D = lazy(() => import("./DiceRoll3D.tsx"));
 
 /**
  * The playing surface, laid out for portrait phones: the classic board
@@ -38,7 +49,7 @@ const EDGE_PAD = 6;
 /** Fraction of the column width the spike triangles span. */
 const TRI_FRAC = 0.88;
 /** How long the 3D dice roll plays before the reveal docks to the tray. */
-const REVEAL_MS = 2200;
+const REVEAL_MS = 1500;
 
 interface DragState {
   from: number;
@@ -58,6 +69,12 @@ export function GameBoard({ state, send }: GameBoardProps) {
 
   const pending = usePendingMoves(state, send);
   const { displayBoard } = pending;
+
+  // Warm the 3D-dice chunk while the board is idle so the first roll's
+  // reveal is instant.
+  useEffect(() => {
+    void import("./DiceRoll3D.tsx");
+  }, []);
 
   const fieldRef = useRef<HTMLDivElement>(null);
   const [fieldSize, setFieldSize] = useState({ w: 0, h: 0 });
@@ -393,11 +410,13 @@ export function GameBoard({ state, send }: GameBoardProps) {
                       transition: { duration: 0.45, ease: [0.5, 0, 0.75, 1] },
                     }}
                   >
-                    <DiceRoll3D
-                      dice={reveal.dice}
-                      roller={reveal.roller}
-                      myColor={myColor}
-                    />
+                    <Suspense fallback={null}>
+                      <DiceRoll3D
+                        dice={reveal.dice}
+                        roller={reveal.roller}
+                        myColor={myColor}
+                      />
+                    </Suspense>
                   </motion.div>
                 )}
               </AnimatePresence>
