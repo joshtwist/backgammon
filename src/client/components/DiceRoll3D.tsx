@@ -143,16 +143,23 @@ export function DiceRoll3D({ dice, roller, myColor }: DiceRoll3DProps) {
       roughness: 0.32,
       metalness: 0.06,
     });
-    const pipGeo = new THREE.SphereGeometry(DIE * 0.082, 14, 14);
+    // Pips are thin flat discs (not spheres) so they lie on the plane of
+    // the face, proud by just a hair so they still catch the light.
+    const pipGeo = new THREE.CylinderGeometry(
+      DIE * 0.072,
+      DIE * 0.072,
+      DIE * 0.03,
+      20,
+    );
     const pipMat = new THREE.MeshStandardMaterial({
       color: 0x27272f,
       roughness: 0.5,
     });
 
     const spacing = DIE * 0.25;
-    const surface = DIE * 0.5 + DIE * 0.01;
+    const PIP_UP = new THREE.Vector3(0, 1, 0);
 
-    /** Build one die: rounded body + recessed pips on all six faces. */
+    /** Build one die: rounded body + flat disc pips on all six faces. */
     function makeDie(): THREE.Object3D {
       const die = new THREE.Mesh(bodyGeo, bodyMat);
       for (let value = 1; value <= 6; value++) {
@@ -163,12 +170,15 @@ export function DiceRoll3D({ dice, roller, myColor }: DiceRoll3DProps) {
           const col = (cell % 3) - 1;
           const row = Math.floor(cell / 3) - 1;
           const pip = new THREE.Mesh(pipGeo, pipMat);
+          // A cylinder's axis is +Y; align it to the face normal so the
+          // disc lies flat on the face, round side out.
+          pip.quaternion.setFromUnitVectors(PIP_UP, n);
+          // Sit essentially on the plane, proud by a hair.
           pip.position
             .copy(n)
-            .multiplyScalar(surface)
+            .multiplyScalar(DIE * 0.5 + DIE * 0.004)
             .addScaledVector(u, col * spacing)
             .addScaledVector(v, row * spacing);
-          pip.scale.z = 0.5; // flatten into the face a touch
           die.add(pip);
         }
       }
