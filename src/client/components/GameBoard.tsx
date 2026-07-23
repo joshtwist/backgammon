@@ -48,8 +48,9 @@ const TRAY_H = 50;
 const EDGE_PAD = 6;
 /** Fraction of the column width the spike triangles span. */
 const TRI_FRAC = 0.88;
-/** How long the 3D dice roll plays before the reveal docks to the tray. */
-const REVEAL_MS = 1500;
+/** How long the 3D dice roll shows (spin + a hold to read it) before it
+ * fades out. The rolled values stay visible in the tray below. */
+const REVEAL_MS = 2350;
 
 interface DragState {
   from: number;
@@ -403,12 +404,9 @@ export function GameBoard({ state, send }: GameBoardProps) {
                     key={reveal.turn}
                     data-testid="dice-reveal"
                     className="absolute inset-0 z-40 pointer-events-none"
-                    exit={{
-                      y: H * 0.42,
-                      scale: 0.45,
-                      opacity: 0,
-                      transition: { duration: 0.45, ease: [0.5, 0, 0.75, 1] },
-                    }}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1, transition: { duration: 0.15 } }}
+                    exit={{ opacity: 0, transition: { duration: 0.5 } }}
                   >
                     <Suspense fallback={null}>
                       <DiceRoll3D
