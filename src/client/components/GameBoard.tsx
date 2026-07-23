@@ -9,6 +9,7 @@ import {
 } from "react";
 import { motion, AnimatePresence, useAnimationControls } from "framer-motion";
 import type { PanInfo } from "framer-motion";
+import { RotateCw } from "lucide-react";
 import { BAR, OFF } from "../../shared/types.ts";
 import type { Color, DicePair, Move } from "../../shared/types.ts";
 import type { ClientMessage, StateMessage } from "../../shared/protocol.ts";
@@ -33,9 +34,14 @@ const DiceRoll3D = lazy(() => import("./DiceRoll3D.tsx"));
  * of 12, with the bar as a horizontal strip across the middle and both
  * bear-off trays along the bottom edge.
  *
- * Everything renders from the viewing player's own perspective:
- *   left column, top→bottom: 12..7, [bar], 6..1   (home = bottom left)
- *   right column, top→bottom: 13..18, [bar], 19..24 (opp home = bottom right)
+ * The board is rendered in ONE fixed orientation (white's numbering),
+ * identical on both players' screens, so the two people are looking at
+ * exactly the same board and can talk about the same points:
+ *   left column, top→bottom: 12..7, [bar], 6..1   (white home = bottom left)
+ *   right column, top→bottom: 13..18, [bar], 19..24 (black home = bottom right)
+ * White moves 24→1, black moves 1→24 (opposite directions, one board).
+ * The black player's drags are mapped to their own engine numbering via
+ * `flip`; nothing about the shared frame reaches the server.
  *
  * Drag semantics: a checker may be dropped ONLY while over a highlighted
  * legal target (the one under the pointer is "armed" — brighter). Any
@@ -70,6 +76,38 @@ export function GameBoard({ state, send }: GameBoardProps) {
 
   const pending = usePendingMoves(state, send);
   const { displayBoard } = pending;
+
+  // The board renders in white's numbering for everyone. If I'm black, my
+  // own engine numbering is the mirror of the displayed numbering; these
+  // map between the two (points 1..24 only; BAR/OFF are unchanged).
+  const flip = myColor === "black";
+  const toOwn = (dp: number) => (dp >= 1 && dp <= 24 ? (flip ? 25 - dp : dp) : dp);
+  const toDisplay = (op: number) =>
+    op >= 1 && op <= 24 ? (flip ? 25 - op : op) : op;
+  /** My checkers on a displayed point (white frame). */
+  const myCountAt = (A: number) =>
+    myColor === "white" ? displayBoard.white[A] : displayBoard.black[25 - A];
+
+  // Optional 180° board flip (some players like the bear-off tray at the
+  // top). Purely a per-device display preference — persisted, and mapped
+  // out of pointer coordinates in hitTest so interaction is unaffected.
+  const [flipped, setFlipped] = useState(() => {
+    try {
+      return localStorage.getItem("backgammon:flipBoard") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleFlip = () =>
+    setFlipped((f) => {
+      const next = !f;
+      try {
+        localStorage.setItem("backgammon:flipBoard", next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
 
   // Warm the 3D-dice chunk while the board is idle so the first roll's
   // reveal is instant.
@@ -229,14 +267,19 @@ export function GameBoard({ state, send }: GameBoardProps) {
       const el = fieldRef.current;
       if (!el) return null;
       const rect = el.getBoundingClientRect();
-      const x = clientX - rect.left;
-      const y = clientY - rect.top;
+      // The field is CSS-rotated 180° when flipped, but its bounding box is
+      // unchanged; invert the pointer into the un-rotated logical space so
+      // all the row/column math below stays identical.
+      const x = flipped ? W - (clientX - rect.left) : clientX - rect.left;
+      const y = flipped ? H - (clientY - rect.top) : clientY - rect.top;
       if (x < 0 || x > W || y < 0 || y > H + 10) return null;
 
       const trayY = 12 * rowH + BAR_H;
       if (y >= trayY) {
-        // Only MY tray (left half, under my home board) accepts drops.
-        return x < colW ? OFF : null;
+        // Bear-off: white's tray is bottom-left, black's bottom-right.
+        // Only my own tray accepts a drop.
+        const leftTray = x < colW;
+        return leftTray === (myColor === "white") ? OFF : null;
       }
       const barY = 6 * rowH;
       if (y >= barY && y < barY + BAR_H) return null;
@@ -254,7 +297,7 @@ export function GameBoard({ state, send }: GameBoardProps) {
 
       return x < colW ? 12 - row : 13 + row;
     },
-    [W, H, rowH, colW, checker],
+    [W, H, rowH, colW, checker, myColor, flipped],
   );
 
   // ── Drag handlers ────────────────────────────────────────────────
@@ -265,12 +308,19 @@ export function GameBoard({ state, send }: GameBoardProps) {
     setArmedTarget(value);
   }
 
-  function handleDragStart(from: number) {
+  function handleDragStart(displayFrom: number) {
     dropHandledRef.current = false;
-    dragTargetsRef.current = pending.targetsFor(from);
+    // targetsFor works in my own numbering; re-key the result to the
+    // displayed (white-frame) numbering so hit-testing lines up.
+    const ownTargets = pending.targetsFor(toOwn(displayFrom));
+    const disp = new Map<number, Move[]>();
+    ownTargets.forEach((path, ownDest) => {
+      disp.set(ownDest === OFF ? OFF : toDisplay(ownDest), path);
+    });
+    dragTargetsRef.current = disp;
     armedRef.current = null;
     setArmedTarget(null);
-    setDrag({ from, targets: dragTargetsRef.current });
+    setDrag({ from: displayFrom, targets: disp });
   }
 
   function handleDragMove(info: PanInfo) {
@@ -280,20 +330,22 @@ export function GameBoard({ state, send }: GameBoardProps) {
     setArmed(t !== null && targets.has(t) ? t : null);
   }
 
-  function handleDragEnd(from: number, info: PanInfo) {
+  function handleDragEnd(_from: number, info: PanInfo) {
     if (dropHandledRef.current) return;
-    const targets = dragTargetsRef.current ?? pending.targetsFor(from);
+    const targets = dragTargetsRef.current;
     const target = hitTest(info.point.x, info.point.y);
 
-    if (target !== null) {
+    if (targets && target !== null) {
       const path = targets.get(target);
       if (path) {
         dropHandledRef.current = true;
 
         // Slide the landed checker from the release point into its slot.
+        // (Skipped when the board is flipped 180°, where the release
+        // coordinates would need un-rotating — the checker still pops in.)
         const rect = fieldRef.current?.getBoundingClientRect();
-        if (rect && target !== OFF) {
-          const landedCount = displayBoard[myColor][target] + 1;
+        if (rect && target !== OFF && !flipped) {
+          const landedCount = myCountAt(target) + 1;
           const slot = slotPosition(target, landedCount - 1, landedCount);
           landingRef.current = {
             p: target,
@@ -327,45 +379,68 @@ export function GameBoard({ state, send }: GameBoardProps) {
 
   return (
     <div className="flex flex-1 flex-col max-w-md w-full mx-auto min-h-0 px-2 pb-1">
-      {opponent && (
-        <PlayerHUD
-          player={opponent}
-          board={displayBoard}
-          isTheirTurn={state.turn?.color === oppColor}
-        />
-      )}
+      <div className="flex items-center">
+        <div className="flex-1 min-w-0">
+          {opponent && (
+            <PlayerHUD
+              player={opponent}
+              board={displayBoard}
+              isTheirTurn={state.turn?.color === oppColor}
+            />
+          )}
+        </div>
+        <button
+          type="button"
+          data-testid="flip-board-btn"
+          onClick={toggleFlip}
+          aria-label="Flip board"
+          aria-pressed={flipped}
+          title="Flip board"
+          className={`mr-1 p-2 rounded-lg border transition-colors cursor-pointer ${
+            flipped
+              ? "bg-gold/20 border-gold/50 text-gold"
+              : "bg-slate-800/60 border-slate-700 text-slate-300 hover:bg-slate-700"
+          }`}
+        >
+          <RotateCw className="w-4 h-4" />
+        </button>
+      </div>
 
       {/* Board field (shaken by hits) */}
       <motion.div
         animate={shakeControls}
         className="relative flex-1 min-h-0 rounded-xl border-[6px] border-wood bg-felt shadow-inner"
       >
-        <div ref={fieldRef} className="absolute inset-0">
+        <div
+          ref={fieldRef}
+          className="absolute inset-0"
+          style={{ transform: flipped ? "rotate(180deg)" : undefined }}
+        >
           {ready && (
             <>
-              {/* Point triangles + stacks */}
-              {Array.from({ length: 24 }, (_, i) => i + 1).map((p) => (
+              {/* Point triangles + stacks (fixed white-frame numbering) */}
+              {Array.from({ length: 24 }, (_, i) => i + 1).map((A) => (
                 <PointRow
-                  key={p}
-                  p={p}
-                  geometry={pointGeometry(p)}
+                  key={A}
+                  p={A}
+                  geometry={pointGeometry(A)}
                   colW={colW}
                   rowH={rowH}
                   checker={checker}
-                  myColor={myColor}
-                  myCount={displayBoard[myColor][p]}
-                  oppCount={displayBoard[oppColor][25 - p]}
-                  // Never gate this on the active drag: flipping the
-                  // framer `drag` prop to false mid-gesture kills the
-                  // gesture before onDragEnd can fire.
-                  draggable={pending.draggableSources.has(p)}
-                  dragging={drag?.from === p}
-                  highlighted={drag?.targets.has(p) ?? false}
-                  armed={armedTarget === p}
-                  landing={landing?.p === p ? landing : null}
-                  onDragStart={() => handleDragStart(p)}
+                  flipped={flipped}
+                  whiteCount={displayBoard.white[A]}
+                  blackCount={displayBoard.black[25 - A]}
+                  // Draggable = I (the mover) can move from this point.
+                  // Never gate on the active drag: flipping the framer
+                  // `drag` prop mid-gesture kills it before onDragEnd.
+                  draggable={pending.draggableSources.has(toOwn(A))}
+                  dragging={drag?.from === A}
+                  highlighted={drag?.targets.has(A) ?? false}
+                  armed={armedTarget === A}
+                  landing={landing?.p === A ? landing : null}
+                  onDragStart={() => handleDragStart(A)}
                   onDrag={handleDragMove}
-                  onDragEnd={(info) => handleDragEnd(p, info)}
+                  onDragEnd={(info) => handleDragEnd(A, info)}
                 />
               ))}
 
@@ -375,8 +450,9 @@ export function GameBoard({ state, send }: GameBoardProps) {
                 w={W}
                 checker={checker}
                 myColor={myColor}
-                myCount={displayBoard[myColor][BAR]}
-                oppCount={displayBoard[oppColor][BAR]}
+                flipped={flipped}
+                whiteCount={displayBoard.white[BAR]}
+                blackCount={displayBoard.black[BAR]}
                 draggable={pending.draggableSources.has(BAR)}
                 dragging={drag?.from === BAR}
                 onDragStart={() => handleDragStart(BAR)}
@@ -384,13 +460,14 @@ export function GameBoard({ state, send }: GameBoardProps) {
                 onDragEnd={(info) => handleDragEnd(BAR, info)}
               />
 
-              {/* Bear-off trays */}
+              {/* Bear-off trays: white bottom-left, black bottom-right */}
               <TrayRow
                 y={12 * rowH + BAR_H}
                 w={W}
                 myColor={myColor}
-                myOff={displayBoard[myColor][OFF]}
-                oppOff={displayBoard[oppColor][OFF]}
+                flipped={flipped}
+                whiteOff={displayBoard.white[OFF]}
+                blackOff={displayBoard.black[OFF]}
                 highlighted={drag?.targets.has(OFF) ?? false}
                 armed={armedTarget === OFF}
               />
@@ -550,9 +627,11 @@ interface PointRowProps {
   colW: number;
   rowH: number;
   checker: number;
-  myColor: Color;
-  myCount: number;
-  oppCount: number;
+  flipped: boolean;
+  /** Absolute (white-frame) occupancy — same for both viewers. */
+  whiteCount: number;
+  blackCount: number;
+  /** True when I (the mover) can pick up the top checker here. */
   draggable: boolean;
   dragging: boolean;
   highlighted: boolean;
@@ -571,9 +650,9 @@ function PointRow({
   colW,
   rowH,
   checker,
-  myColor,
-  myCount,
-  oppCount,
+  flipped,
+  whiteCount,
+  blackCount,
   draggable,
   dragging,
   highlighted,
@@ -584,8 +663,8 @@ function PointRow({
   onDragEnd,
 }: PointRowProps) {
   const { leftCol, x, y } = geometry;
-  const count = myCount > 0 ? myCount : oppCount;
-  const color: Color = myCount > 0 ? myColor : other(myColor);
+  const count = whiteCount > 0 ? whiteCount : blackCount;
+  const color: Color = whiteCount > 0 ? "white" : "black";
   const dark = p % 2 === 0;
 
   const triangleLen = colW * TRI_FRAC;
@@ -626,12 +705,14 @@ function PointRow({
         }}
       />
 
-      {/* Point number (helps orientation) */}
+      {/* Point number (helps orientation). Counter-rotated when the board
+          is flipped so it stays readable. */}
       <span
         className="absolute text-[9px] text-white/35 font-medium select-none"
         style={{
           top: 1,
           [leftCol ? "left" : "right"]: 3,
+          transform: flipped ? "rotate(180deg)" : undefined,
         }}
       >
         {p}
@@ -657,7 +738,6 @@ function PointRow({
       {/* Checkers */}
       {Array.from({ length: count }).map((_, i) => {
         const isTop = i === count - 1;
-        const mine = myCount > 0;
         return (
           <Checker
             key={`${p}-${i}`}
@@ -665,11 +745,11 @@ function PointRow({
             size={checker}
             x={checkerX(i)}
             y={checkerY}
-            draggable={mine && draggable && isTop}
+            draggable={draggable && isTop}
             onDragStart={onDragStart}
             onDrag={onDrag}
             onDragEnd={onDragEnd}
-            enterFrom={isTop && mine ? landing : null}
+            enterFrom={isTop ? landing : null}
             testid={isTop ? `top-${p}` : undefined}
           />
         );
@@ -699,8 +779,10 @@ interface BarStripProps {
   w: number;
   checker: number;
   myColor: Color;
-  myCount: number;
-  oppCount: number;
+  flipped: boolean;
+  /** Absolute occupancy of the bar — same for both viewers. */
+  whiteCount: number;
+  blackCount: number;
   draggable: boolean;
   dragging: boolean;
   onDragStart: () => void;
@@ -713,8 +795,9 @@ function BarStrip({
   w,
   checker,
   myColor,
-  myCount,
-  oppCount,
+  flipped,
+  whiteCount,
+  blackCount,
   draggable,
   dragging,
   onDragStart,
@@ -724,11 +807,18 @@ function BarStrip({
   const cy = (BAR_H - checker) / 2;
   const step = checker * 0.45;
 
+  // White clusters left of centre, black right — fixed for both players.
+  const clusters: { color: Color; count: number; baseX: number; dir: number }[] =
+    [
+      { color: "white", count: whiteCount, baseX: w * 0.3, dir: 1 },
+      { color: "black", count: blackCount, baseX: w * 0.7, dir: -1 },
+    ];
+
   return (
     <div
       data-testid="bar"
-      data-count-you={myCount}
-      data-count-opponent={oppCount}
+      data-count-you={myColor === "white" ? whiteCount : blackCount}
+      data-count-opponent={myColor === "white" ? blackCount : whiteCount}
       className="absolute bg-wood border-y border-wood-light/40"
       style={{
         left: 0,
@@ -738,36 +828,33 @@ function BarStrip({
         zIndex: dragging ? 40 : 5,
       }}
     >
-      <span className="absolute inset-0 flex items-center justify-center text-[10px] font-semibold tracking-[0.3em] text-white/25 select-none">
+      <span
+        className="absolute inset-0 flex items-center justify-center text-[10px] font-semibold tracking-[0.3em] text-white/25 select-none"
+        style={{ transform: flipped ? "rotate(180deg)" : undefined }}
+      >
         BAR
       </span>
 
-      {/* My hit checkers cluster left of center */}
-      {Array.from({ length: myCount }).map((_, i) => (
-        <Checker
-          key={`bar-you-${i}`}
-          color={myColor}
-          size={checker}
-          x={w * 0.3 - checker / 2 + i * step}
-          y={cy}
-          draggable={draggable && i === myCount - 1}
-          onDragStart={onDragStart}
-          onDrag={onDrag}
-          onDragEnd={onDragEnd}
-          testid={i === myCount - 1 ? "top-25" : undefined}
-        />
-      ))}
-
-      {/* Opponent's hit checkers cluster right of center */}
-      {Array.from({ length: oppCount }).map((_, i) => (
-        <Checker
-          key={`bar-opp-${i}`}
-          color={other(myColor)}
-          size={checker}
-          x={w * 0.7 - checker / 2 - i * step}
-          y={cy}
-        />
-      ))}
+      {clusters.map(({ color, count, baseX, dir }) =>
+        Array.from({ length: count }).map((_, i) => {
+          const isTop = i === count - 1;
+          const mine = color === myColor;
+          return (
+            <Checker
+              key={`bar-${color}-${i}`}
+              color={color}
+              size={checker}
+              x={baseX - checker / 2 + dir * i * step}
+              y={cy}
+              draggable={mine && draggable && isTop}
+              onDragStart={mine ? onDragStart : undefined}
+              onDrag={mine ? onDrag : undefined}
+              onDragEnd={mine ? onDragEnd : undefined}
+              testid={mine && isTop ? "top-25" : undefined}
+            />
+          );
+        }),
+      )}
     </div>
   );
 }
@@ -778,8 +865,10 @@ interface TrayRowProps {
   y: number;
   w: number;
   myColor: Color;
-  myOff: number;
-  oppOff: number;
+  flipped: boolean;
+  /** Absolute borne-off counts — white's tray is left, black's is right. */
+  whiteOff: number;
+  blackOff: number;
   highlighted: boolean;
   armed: boolean;
 }
@@ -788,33 +877,41 @@ function TrayRow({
   y,
   w,
   myColor,
-  myOff,
-  oppOff,
+  flipped,
+  whiteOff,
+  blackOff,
   highlighted,
   armed,
 }: TrayRowProps) {
-  return (
-    <div
-      className="absolute flex"
-      style={{ left: 0, top: y, width: w, height: TRAY_H }}
-    >
-      {/* My tray (bottom-left, under my home board) */}
+  const labelStyle = flipped ? { transform: "rotate(180deg)" } : undefined;
+
+  const tray = (side: "left" | "right", color: Color, off: number) => {
+    const mine = color === myColor;
+    return (
       <div
-        data-testid="tray-you"
-        data-count={myOff}
+        data-testid={mine ? "tray-you" : "tray-opponent"}
+        data-count={off}
         className={`relative flex-1 m-1 rounded-lg border-2 flex items-center px-2 gap-1 transition-colors ${
-          armed
+          side === "right" ? "justify-end" : ""
+        } ${
+          mine && armed
             ? "border-gold bg-gold/30 shadow-[0_0_14px_rgba(245,158,11,0.5)]"
-            : highlighted
+            : mine && highlighted
               ? "border-gold bg-gold/15"
               : "border-wood-light/50 bg-wood-dark/70"
         }`}
       >
-        <TrayChips count={myOff} color={myColor} />
-        <span className="ml-auto text-[10px] font-semibold text-white/50 select-none">
-          {myOff > 0 ? `${myOff} OFF` : "BEAR OFF"}
+        {side === "left" && <TrayChips count={off} color={color} />}
+        <span
+          className={`text-[10px] font-semibold text-white/50 select-none ${
+            side === "left" ? "ml-auto" : "mr-auto"
+          }`}
+          style={labelStyle}
+        >
+          {off > 0 ? `${off} OFF` : mine ? "BEAR OFF" : ""}
         </span>
-        {highlighted && !armed && (
+        {side === "right" && <TrayChips count={off} color={color} mirrored />}
+        {mine && highlighted && !armed && (
           <motion.div
             data-testid="target-off"
             animate={{ opacity: [0.4, 0.9, 0.4] }}
@@ -823,18 +920,16 @@ function TrayRow({
           />
         )}
       </div>
+    );
+  };
 
-      {/* Opponent tray (bottom-right, under their home board) */}
-      <div
-        data-testid="tray-opponent"
-        data-count={oppOff}
-        className="relative flex-1 m-1 rounded-lg border-2 border-wood-light/50 bg-wood-dark/70 flex items-center justify-end px-2 gap-1"
-      >
-        <span className="mr-auto text-[10px] font-semibold text-white/50 select-none">
-          {oppOff > 0 ? `${oppOff} OFF` : ""}
-        </span>
-        <TrayChips count={oppOff} color={other(myColor)} mirrored />
-      </div>
+  return (
+    <div
+      className="absolute flex"
+      style={{ left: 0, top: y, width: w, height: TRAY_H }}
+    >
+      {tray("left", "white", whiteOff)}
+      {tray("right", "black", blackOff)}
     </div>
   );
 }

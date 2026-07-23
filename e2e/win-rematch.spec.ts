@@ -74,7 +74,7 @@ test("gammon win, rematch with carried series, second game accumulates", async (
   );
   await forceRolls(page2, [1, 3]);
   await page2.getByTestId("roll-btn").click();
-  await dragMove(page2, 1, "off");
+  await dragMove(page2, 24, "off"); // black's own 1-point is absolute 24
   await confirmTurn(page2);
 
   await expect(page2.getByTestId("winner-banner")).toHaveText("You Won!");

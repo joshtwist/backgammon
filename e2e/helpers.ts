@@ -164,7 +164,11 @@ export async function confirmTurn(page: Page): Promise<void> {
   await btn.click();
 }
 
-/** Assert a point's stack (viewer's numbering) has `count` checkers. */
+/**
+ * Assert a point's stack has `count` checkers. Points are now in the fixed
+ * shared (white) numbering on BOTH screens, so the same number means the
+ * same physical point for either player.
+ */
 export async function expectPointCount(
   page: Page,
   point: number,
@@ -174,6 +178,28 @@ export async function expectPointCount(
     "data-count",
     String(count),
   );
+}
+
+/**
+ * Verify both players are looking at the SAME board: for each point,
+ * occupancy (count + colour) must be identical on both screens.
+ */
+export async function expectSameBoard(
+  page1: Page,
+  page2: Page,
+  points: number[],
+): Promise<void> {
+  for (const p of points) {
+    const a = page1.getByTestId(`point-${p}`);
+    const b = page2.getByTestId(`point-${p}`);
+    const [c1, col1, c2, col2] = await Promise.all([
+      a.getAttribute("data-count"),
+      a.getAttribute("data-color"),
+      b.getAttribute("data-count"),
+      b.getAttribute("data-color"),
+    ]);
+    expect(`${p}:${c1}:${col1}`).toBe(`${p}:${c2}:${col2}`);
+  }
 }
 
 /** Attach error logging so failures surface console errors. */

@@ -106,9 +106,10 @@ test.describe("Rules through the UI", () => {
     await forceRolls(page2, [3, 4]);
     await page2.getByTestId("roll-btn").click();
 
-    // Black hits with 8/5* then plays 8/4.
-    await dragMove(page2, 8, 5);
-    await dragMove(page2, 8, 4);
+    // Black hits with 8/5* then plays 8/4 (own numbering). In the shared
+    // white frame those are 17/20* and 17/21.
+    await dragMove(page2, 17, 20);
+    await dragMove(page2, 17, 21);
     await confirmTurn(page2);
 
     // White is on the bar (bar badge on white's own page).

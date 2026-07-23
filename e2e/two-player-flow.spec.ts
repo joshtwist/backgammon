@@ -9,6 +9,7 @@ import {
   dragMove,
   confirmTurn,
   expectPointCount,
+  expectSameBoard,
 } from "./helpers.ts";
 
 test.describe("Two-player game flow", () => {
@@ -86,24 +87,29 @@ test.describe("Two-player game flow", () => {
     await expectPointCount(page1, 13, 3);
     await confirmTurn(page1);
 
-    // Black's turn: P2 gets the roll button and sees white's move
-    // (white's 8 is black's 17) plus the move recap.
+    // Both players see the SAME board now — white's move shows at the same
+    // (absolute) points on both screens, not mirrored.
     await expect(page2.getByTestId("roll-btn")).toBeVisible();
-    await expectPointCount(page2, 17, 4);
+    await expectPointCount(page2, 8, 4);
+    await expectPointCount(page2, 10, 1);
+    await expectSameBoard(page1, page2, [1, 6, 8, 10, 12, 13, 17, 19, 24]);
     await expect(page2.getByTestId("info-line")).toContainText("13/8");
 
-    // Black plays 24/18 13/11 with a forced 6-2. Both players get the
-    // center dice-reveal theater.
+    // Black plays (in the shared frame) 1/7 12/14 — black's own 24/18 13/11
+    // with a forced 6-2. Both players get the center dice-reveal theater.
     await rollAs(page2, 6, 2);
     await expect(page2.getByTestId("dice-reveal")).toBeVisible();
     await expect(page1.getByTestId("dice-reveal")).toBeVisible();
-    // ...and it docks away on its own shortly after
+    // ...and it fades away on its own after the hold (~2.35s + fade).
     await expect(page1.getByTestId("dice-reveal")).toHaveCount(0, {
-      timeout: 4_000,
+      timeout: 7_000,
     });
-    await dragMove(page2, 24, 18);
-    await dragMove(page2, 13, 11);
+    await dragMove(page2, 1, 7); // black's back checker, 6
+    await dragMove(page2, 12, 14); // black's midpoint, 2
     await confirmTurn(page2);
+
+    // White sees black's checkers land at those same absolute points.
+    await expectSameBoard(page1, page2, [1, 7, 12, 14, 19, 24]);
 
     // Back to white
     await expect(page1.getByTestId("roll-btn")).toBeVisible();
@@ -135,6 +141,43 @@ test.describe("Two-player game flow", () => {
 
     // The opponent saw the disconnect+reconnect without state loss
     await expect(page2.getByTestId("turn-status")).toContainText("is moving");
+
+    await ctx1.close();
+    await ctx2.close();
+  });
+
+  test("flip-board toggle rotates the board and keeps dragging working", async ({
+    browser,
+  }) => {
+    const { ctx1, ctx2, page1, page2 } = await setupTwoPlayers(browser);
+    const { gameUrl } = await createGame(page1);
+    await joinAs(page1, "Josh", "rocket");
+    await page2.goto(gameUrl);
+    await joinAs(page2, "Anna", "cat");
+    await page1.getByTestId("start-game-btn").click();
+    await playOpening(page1, page2, 5, 3); // white (page1) to move
+
+    // Flip only affects the local view — page2 is unchanged.
+    await page1.getByTestId("flip-board-btn").click();
+    const field = page1.locator('[data-testid="point-1"]').locator("..");
+    await expect(field).toHaveCSS("transform", /matrix\(-1, 0, 0, -1/);
+
+    // Dragging still lands correctly despite the 180° rotation (hit-test
+    // un-rotates the pointer): white plays 13/8 (5) and 13/10 (3).
+    await dragMove(page1, 13, 8);
+    await expectPointCount(page1, 8, 4);
+    await dragMove(page1, 13, 10);
+    await expectPointCount(page1, 10, 1);
+    await confirmTurn(page1);
+    await expectPointCount(page2, 8, 4);
+    await expectPointCount(page2, 10, 1);
+
+    // Preference persists across a reload.
+    await page1.reload();
+    await expect(page1.getByTestId("flip-board-btn")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
 
     await ctx1.close();
     await ctx2.close();

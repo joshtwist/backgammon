@@ -12,7 +12,9 @@ import { defineConfig, devices } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./e2e",
-  timeout: 60_000,
+  // The 3D dice reveal holds ~2.3s and plays several times per test, so
+  // full end-to-end games take a while.
+  timeout: 120_000,
   expect: {
     timeout: 10_000,
   },
