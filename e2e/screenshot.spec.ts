@@ -24,7 +24,10 @@ test.describe("screenshots", () => {
 
     await playOpening(page1, page2, 5, 3);
     await page1.waitForSelector('[data-testid="dice-tray"]');
-    await page1.waitForTimeout(1200); // let pop-in animations settle
+    // Catch the dice reveal mid-hold on the non-roller's screen
+    await page1.waitForTimeout(500);
+    await page2.screenshot({ path: "test-results/shots/dice-reveal.png" });
+    await page1.waitForTimeout(1400); // reveal docks + pop-ins settle
     await page1.screenshot({ path: "test-results/shots/board-white-to-move.png" });
     await page2.screenshot({ path: "test-results/shots/board-black-waiting.png" });
 
@@ -42,6 +45,17 @@ test.describe("screenshots", () => {
     await dragMove(page1, 25, 21);
     await page1.waitForTimeout(700);
     await page1.screenshot({ path: "test-results/shots/mid-staging.png" });
+
+    // Impatience nudge: sit on the roll for 5+ seconds
+    await setPosition(
+      page1,
+      board({ 13: 5, 8: 5, 6: 5 }, { 13: 5, 8: 5, 6: 5 }),
+      "white",
+    );
+    await page1.waitForSelector('[data-testid="roll-btn"]');
+    await page1.waitForTimeout(5600);
+    await page1.screenshot({ path: "test-results/shots/impatience-roller.png" });
+    await page2.screenshot({ path: "test-results/shots/impatience-waiter.png" });
 
     // Win screen
     await setPosition(page1, board({ 2: 1, 1: 1 }, { 6: 15 }), "white");

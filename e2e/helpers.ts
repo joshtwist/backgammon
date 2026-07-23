@@ -139,6 +139,10 @@ export async function dragMove(
   const target =
     to === "off" ? page.getByTestId("tray-you") : page.getByTestId(`point-${to}`);
 
+  // Wait for the checker to be stable before gripping it — a previous
+  // rejected drop leaves it springing back home for a few hundred ms.
+  await source.hover();
+
   const src = await source.boundingBox();
   const dst = await target.boundingBox();
   if (!src || !dst) throw new Error(`dragMove: missing element ${from}→${to}`);

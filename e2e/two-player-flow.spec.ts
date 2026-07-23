@@ -59,6 +59,25 @@ test.describe("Two-player game flow", () => {
     await expectPointCount(page1, 3, 0);
     await expectPointCount(page1, 6, 5);
 
+    // Mid-drag, the box under the pointer is "armed"; releasing over a
+    // dead zone (the bar strip) stages nothing and the checker returns.
+    const src = (await page1.getByTestId("top-13").boundingBox())!;
+    const p8 = (await page1.getByTestId("point-8").boundingBox())!;
+    const bar = (await page1.getByTestId("bar").boundingBox())!;
+    await page1.mouse.move(src.x + src.width / 2, src.y + src.height / 2);
+    await page1.mouse.down();
+    await page1.mouse.move(p8.x + p8.width / 2, p8.y + p8.height / 2, {
+      steps: 10,
+    });
+    await expect(page1.getByTestId("armed-8")).toBeVisible();
+    await page1.mouse.move(bar.x + bar.width / 2, bar.y + bar.height / 2, {
+      steps: 10,
+    });
+    await expect(page1.getByTestId("armed-8")).toHaveCount(0);
+    await page1.mouse.up();
+    await expectPointCount(page1, 13, 5);
+    await expectPointCount(page1, 8, 3);
+
     // Play 13/8 13/10 and confirm
     await dragMove(page1, 13, 8);
     await expectPointCount(page1, 8, 4);
@@ -73,8 +92,11 @@ test.describe("Two-player game flow", () => {
     await expectPointCount(page2, 17, 4);
     await expect(page2.getByTestId("info-line")).toContainText("13/8");
 
-    // Black plays 24/18 13/11 with a forced 6-2
+    // Black plays 24/18 13/11 with a forced 6-2. Both players get the
+    // center dice-reveal theater.
     await rollAs(page2, 6, 2);
+    await expect(page2.getByTestId("dice-reveal")).toBeVisible();
+    await expect(page1.getByTestId("dice-reveal")).toBeVisible();
     await dragMove(page2, 24, 18);
     await dragMove(page2, 13, 11);
     await confirmTurn(page2);
