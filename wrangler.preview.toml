@@ -1,0 +1,20 @@
+# Throwaway preview worker for the experimental 3D dice (dice-3d branch).
+# Deliberately has NO custom-domain route so it can never touch the
+# production backgammon.playcards.free hostname. Delete the worker when
+# the experiment is resolved:  wrangler delete --name backgammon-dice-preview
+name = "backgammon-dice-preview"
+main = "src/server/index.ts"
+compatibility_date = "2025-04-01"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+
+[durable_objects]
+bindings = [
+  { name = "GAME_ROOM", class_name = "GameRoom" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["GameRoom"]
