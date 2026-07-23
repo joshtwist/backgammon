@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { motion, AnimatePresence, useAnimationControls } from "framer-motion";
 import type { PanInfo } from "framer-motion";
 import { BAR, OFF } from "../../shared/types.ts";
@@ -13,8 +21,11 @@ import {
 } from "../lib/impatience.ts";
 import { Checker } from "./Checker.tsx";
 import { DiceTray } from "./DiceTray.tsx";
-import { DieFace } from "./Dice.tsx";
 import { PlayerHUD } from "./PlayerHUD.tsx";
+
+// three.js is heavy; keep it out of the initial bundle and load the 3D
+// dice as a separate chunk (preloaded on mount, below).
+const DiceRoll3D = lazy(() => import("./DiceRoll3D.tsx"));
 
 /**
  * The playing surface, laid out for portrait phones: the classic board
@@ -37,8 +48,8 @@ const TRAY_H = 50;
 const EDGE_PAD = 6;
 /** Fraction of the column width the spike triangles span. */
 const TRI_FRAC = 0.88;
-/** How long the center dice reveal holds before docking to the tray. */
-const REVEAL_MS = 1350;
+/** How long the 3D dice roll plays before the reveal docks to the tray. */
+const REVEAL_MS = 1500;
 
 interface DragState {
   from: number;
@@ -58,6 +69,12 @@ export function GameBoard({ state, send }: GameBoardProps) {
 
   const pending = usePendingMoves(state, send);
   const { displayBoard } = pending;
+
+  // Warm the 3D-dice chunk while the board is idle so the first roll's
+  // reveal is instant.
+  useEffect(() => {
+    void import("./DiceRoll3D.tsx");
+  }, []);
 
   const fieldRef = useRef<HTMLDivElement>(null);
   const [fieldSize, setFieldSize] = useState({ w: 0, h: 0 });
@@ -377,14 +394,15 @@ export function GameBoard({ state, send }: GameBoardProps) {
                 armed={armedTarget === OFF}
               />
 
-              {/* Center dice reveal: flies in on every roll, holds, then
-                  docks down toward the tray. Same on both screens. */}
+              {/* Center dice reveal: 3D dice tumble across the board on
+                  every roll, hold, then dock down toward the tray. Same
+                  on both screens (values are server-authoritative). */}
               <AnimatePresence>
                 {reveal && (
                   <motion.div
                     key={reveal.turn}
                     data-testid="dice-reveal"
-                    className="absolute inset-0 z-40 flex items-center justify-center gap-5 pointer-events-none"
+                    className="absolute inset-0 z-40 pointer-events-none"
                     exit={{
                       y: H * 0.42,
                       scale: 0.45,
@@ -392,28 +410,13 @@ export function GameBoard({ state, send }: GameBoardProps) {
                       transition: { duration: 0.45, ease: [0.5, 0, 0.75, 1] },
                     }}
                   >
-                    {reveal.dice.map((d, i) => (
-                      <motion.div
-                        key={i}
-                        initial={{
-                          y: reveal.roller === myColor ? 140 : -140,
-                          x: i === 0 ? -30 : 30,
-                          rotate: i === 0 ? -220 : 200,
-                          scale: 0.3,
-                          opacity: 0,
-                        }}
-                        animate={{ y: 0, x: 0, rotate: 0, scale: 1.55, opacity: 1 }}
-                        transition={{
-                          type: "spring",
-                          stiffness: 240,
-                          damping: 15,
-                          delay: i * 0.09,
-                        }}
-                        style={{ filter: "drop-shadow(0 6px 14px rgba(0,0,0,0.5))" }}
-                      >
-                        <DieFace value={d} size="lg" />
-                      </motion.div>
-                    ))}
+                    <Suspense fallback={null}>
+                      <DiceRoll3D
+                        dice={reveal.dice}
+                        roller={reveal.roller}
+                        myColor={myColor}
+                      />
+                    </Suspense>
                   </motion.div>
                 )}
               </AnimatePresence>

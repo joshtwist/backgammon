@@ -24,10 +24,16 @@ test.describe("screenshots", () => {
 
     await playOpening(page1, page2, 5, 3);
     await page1.waitForSelector('[data-testid="dice-tray"]');
-    // Catch the dice reveal mid-hold on the non-roller's screen
-    await page1.waitForTimeout(500);
-    await page2.screenshot({ path: "test-results/shots/dice-reveal.png" });
-    await page1.waitForTimeout(1400); // reveal docks + pop-ins settle
+    // Confirm WebGL rendered the 3D dice (not the 2D fallback), and
+    // capture several frames across the roll to eyeball the motion.
+    await page1.waitForSelector('[data-testid="dice-3d"]', { timeout: 3000 });
+    for (const ms of [250, 600, 1000, 1500, 1950]) {
+      await page1.waitForTimeout(ms === 250 ? 250 : 350);
+      await page1.screenshot({
+        path: `test-results/shots/roll3d-${ms}.png`,
+      });
+    }
+    await page1.waitForTimeout(1400); // reveal docks + pieces settle
     await page1.screenshot({ path: "test-results/shots/board-white-to-move.png" });
     await page2.screenshot({ path: "test-results/shots/board-black-waiting.png" });
 
