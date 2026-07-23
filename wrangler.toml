@@ -2,6 +2,11 @@ name = "backgammon"
 main = "src/server/index.ts"
 compatibility_date = "2025-04-01"
 
+# Lives alongside the other PlayCards games (rummy, thirty-one, ...)
+routes = [
+  { pattern = "backgammon.playcards.free", custom_domain = true }
+]
+
 # Dev-only env vars (TEST_HOOKS etc.) live in .dev.vars, which is
 # gitignored and never deployed. Production gets no vars here.
 

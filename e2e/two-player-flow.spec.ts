@@ -97,6 +97,10 @@ test.describe("Two-player game flow", () => {
     await rollAs(page2, 6, 2);
     await expect(page2.getByTestId("dice-reveal")).toBeVisible();
     await expect(page1.getByTestId("dice-reveal")).toBeVisible();
+    // ...and it docks away on its own shortly after
+    await expect(page1.getByTestId("dice-reveal")).toHaveCount(0, {
+      timeout: 4_000,
+    });
     await dragMove(page2, 24, 18);
     await dragMove(page2, 13, 11);
     await confirmTurn(page2);

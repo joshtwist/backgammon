@@ -72,7 +72,7 @@ export function Checker({
       }
       className={`absolute rounded-full border-2 ${palette} ${
         draggable
-          ? "cursor-grab active:cursor-grabbing touch-none ring-2 ring-gold/80 shadow-[0_0_10px_rgba(245,158,11,0.45)]"
+          ? "cursor-grab active:cursor-grabbing touch-none ring-[2.5px] ring-purple-500 eligible-glow"
           : ""
       }`}
       style={{

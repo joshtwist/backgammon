@@ -120,9 +120,18 @@ export function GameBoard({ state, send }: GameBoardProps) {
     if (!fresh) return;
 
     setReveal({ dice, turn: t, roller: state.turn.color });
+  }, [state.turnNumber]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The dock-away timer lives in its own effect keyed on the reveal
+  // itself. Kept separate from the trigger above: an effect that both
+  // sets state AND arms the timer behind a mutating ref guard loses its
+  // timer under StrictMode's double-run, leaving the dice parked
+  // center-screen forever.
+  useEffect(() => {
+    if (!reveal) return;
     const timer = setTimeout(() => setReveal(null), REVEAL_MS);
     return () => clearTimeout(timer);
-  }, [state.turnNumber]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [reveal]);
 
   // ── Impatience nudge: 5s of not rolling → a judgmental GIF ───────
 

@@ -22,6 +22,21 @@
   --color-checker-shadow: rgba(0, 0, 0, 0.35);
 }
 
+/* Checkers that are eligible to move: unmissable pulsing purple glow.
+   CSS-animated box-shadow so it never fights framer-motion transforms. */
+@keyframes eligible-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 6px 2px rgba(168, 85, 247, 0.6);
+  }
+  50% {
+    box-shadow: 0 0 18px 6px rgba(168, 85, 247, 1);
+  }
+}
+.eligible-glow {
+  animation: eligible-pulse 1.5s ease-in-out infinite;
+}
+
 /* Prevent pull-to-refresh and overscroll on mobile */
 html,
 body {
