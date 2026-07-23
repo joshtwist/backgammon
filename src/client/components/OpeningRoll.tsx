@@ -82,15 +82,22 @@ export function OpeningRoll({ state, send }: OpeningRollProps) {
         <div className="flex flex-col items-center gap-3">
           <div className="text-slate-300 text-sm font-medium">You</div>
           {myRoll === null ? (
-            <motion.button
+            <button
               data-testid="opening-roll-btn"
               onClick={handleRoll}
-              animate={{ scale: [1, 1.06, 1] }}
-              transition={{ repeat: Infinity, duration: 1.4 }}
-              className="w-16 h-16 rounded-xl bg-gold hover:bg-amber-400 text-slate-900 font-bold shadow-lg shadow-gold/30 cursor-pointer"
+              className="relative w-16 h-16 rounded-xl bg-gold hover:bg-amber-400 text-slate-900 font-bold shadow-lg shadow-gold/30 cursor-pointer"
             >
+              {/* Pulse a decorative ring, not the button itself — a scale
+                  animation on the button makes its hit box unstable (and
+                  trips up both fat thumbs and Playwright). */}
+              <motion.span
+                aria-hidden
+                animate={{ scale: [1, 1.18, 1], opacity: [0.7, 0, 0.7] }}
+                transition={{ repeat: Infinity, duration: 1.4 }}
+                className="absolute inset-0 rounded-xl border-2 border-gold pointer-events-none"
+              />
               Roll
-            </motion.button>
+            </button>
           ) : (
             <DieFace
               value={myRoll}

@@ -3,7 +3,7 @@ import { OFF } from "../../shared/types.ts";
 import type { Move } from "../../shared/types.ts";
 import type { ClientMessage, StateMessage } from "../../shared/protocol.ts";
 import { applyMoves, moveDest } from "../../shared/engine/board.ts";
-import { legalNextMoves } from "../../shared/engine/moves.ts";
+import { legalNextMoves, remainingDice } from "../../shared/engine/moves.ts";
 
 /**
  * Client-local staging of the current turn.
@@ -104,9 +104,23 @@ export function usePendingMoves(
     [board, dice, staged, isMyMove, you.color],
   );
 
-  const stage = useCallback((sequence: Move[]) => {
-    setStaged((prev) => [...prev, ...sequence]);
-  }, []);
+  const stage = useCallback(
+    (sequence: Move[]) => {
+      setStaged((prev) => {
+        // Reject a sequence that no longer fits the remaining dice (e.g.
+        // a duplicate drop event) instead of corrupting the staging and
+        // crashing downstream memos.
+        if (!dice) return prev;
+        try {
+          remainingDice(dice, [...prev, ...sequence]);
+        } catch {
+          return prev;
+        }
+        return [...prev, ...sequence];
+      });
+    },
+    [dice],
+  );
 
   const undo = useCallback(() => {
     setStaged((prev) => prev.slice(0, -1));

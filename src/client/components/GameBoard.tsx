@@ -105,16 +105,30 @@ export function GameBoard({ state, send }: GameBoardProps) {
 
   // ── Drag handlers ────────────────────────────────────────────────
 
+  // Staging a drop re-renders the stack and unmounts the dragged checker,
+  // which can make framer fire a second onDragEnd during teardown. One
+  // drop per gesture, enforced with a ref (state is too slow for fast
+  // automated drags).
+  const dropHandledRef = useRef(false);
+
   function handleDragStart(from: number) {
+    dropHandledRef.current = false;
     setDrag({ from, targets: pending.targetsFor(from) });
   }
 
   function handleDragEnd(from: number, info: PanInfo) {
+    if (dropHandledRef.current) return;
+    // Recompute targets here instead of reading the `drag` state: a fast
+    // drag (automation, quick flicks) can finish before React flushes the
+    // onDragStart state update, which would make the drop a silent no-op.
     const target = hitTest(info.point.x, info.point.y);
-    const path = target === null ? undefined : drag?.targets.get(target);
-    if (path) {
-      pending.stage(path);
-      vibrateAction();
+    if (target !== null) {
+      const path = pending.targetsFor(from).get(target);
+      if (path) {
+        dropHandledRef.current = true;
+        pending.stage(path);
+        vibrateAction();
+      }
     }
     setDrag(null);
   }
@@ -169,9 +183,10 @@ export function GameBoard({ state, send }: GameBoardProps) {
                   myColor={myColor}
                   myCount={displayBoard[myColor][p]}
                   oppCount={displayBoard[oppColor][25 - p]}
-                  draggable={
-                    pending.draggableSources.has(p) && drag === null
-                  }
+                  // Never gate this on the active drag: flipping the
+                  // framer `drag` prop to false mid-gesture kills the
+                  // gesture before onDragEnd can fire.
+                  draggable={pending.draggableSources.has(p)}
                   dragging={drag?.from === p}
                   highlighted={drag?.targets.has(p) ?? false}
                   onDragStart={() => handleDragStart(p)}
@@ -188,9 +203,7 @@ export function GameBoard({ state, send }: GameBoardProps) {
                 myColor={myColor}
                 myCount={displayBoard[myColor][BAR]}
                 oppCount={displayBoard[oppColor][BAR]}
-                draggable={
-                  pending.draggableSources.has(BAR) && drag === null
-                }
+                draggable={pending.draggableSources.has(BAR)}
                 dragging={drag?.from === BAR}
                 onDragStart={() => handleDragStart(BAR)}
                 onDragEnd={(info) => handleDragEnd(BAR, info)}

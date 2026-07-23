@@ -41,18 +41,23 @@ export function DiceTray({
   if (turn.phase === "roll" && isMyTurn) {
     return (
       <div className="flex items-center justify-center py-2">
-        <motion.button
+        <button
           data-testid="roll-btn"
           onClick={() => {
             vibrateAction();
             send({ type: "roll_dice" });
           }}
-          animate={{ scale: [1, 1.04, 1] }}
-          transition={{ repeat: Infinity, duration: 1.3 }}
-          className="w-full max-w-xs py-4 bg-gold hover:bg-amber-400 active:bg-amber-500 text-slate-900 font-bold text-lg rounded-2xl shadow-lg shadow-gold/30 cursor-pointer"
+          className="relative w-full max-w-xs py-4 bg-gold hover:bg-amber-400 active:bg-amber-500 text-slate-900 font-bold text-lg rounded-2xl shadow-lg shadow-gold/30 cursor-pointer"
         >
+          {/* Pulse a ring child, not the button — keeps the hit box stable. */}
+          <motion.span
+            aria-hidden
+            animate={{ scale: [1, 1.05, 1], opacity: [0.6, 0, 0.6] }}
+            transition={{ repeat: Infinity, duration: 1.3 }}
+            className="absolute inset-0 rounded-2xl border-2 border-gold pointer-events-none"
+          />
           Roll Dice
-        </motion.button>
+        </button>
       </div>
     );
   }
