@@ -234,6 +234,14 @@ export function GameBoard({ state, send }: GameBoardProps) {
     };
   }, [idlePending, state.turnNumber, pending.staged.length]);
 
+  // A tap anywhere dismisses the nudge so it never blocks the board.
+  useEffect(() => {
+    if (!nudgeGif) return;
+    const dismiss = () => setNudgeGif(null);
+    window.addEventListener("pointerdown", dismiss, { once: true });
+    return () => window.removeEventListener("pointerdown", dismiss);
+  }, [nudgeGif]);
+
   // ── Hit reaction GIF: I got sent to the bar on the opponent's turn ──
 
   const [hitGif, setHitGif] = useState<string | null>(null);
