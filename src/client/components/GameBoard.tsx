@@ -215,9 +215,10 @@ export function GameBoard({ state, send }: GameBoardProps) {
     preloadImpatientGifs();
   }, []);
 
-  // Fires whether the active player is sitting on the roll or has rolled
-  // but isn't moving. The timer resets on any activity (turn change or a
-  // staged move), so someone actively dragging never triggers it.
+  // Fires only after a full minute of inactivity (rolling or moving), so
+  // it never chases anyone during normal play. The timer resets on any
+  // activity (turn change or a staged move).
+  const NUDGE_MS = 60_000;
   const idlePending =
     state.phase === "playing" &&
     (state.turn?.phase === "roll" || state.turn?.phase === "move");
@@ -226,7 +227,7 @@ export function GameBoard({ state, send }: GameBoardProps) {
       setNudgeGif(null);
       return;
     }
-    const timer = setTimeout(() => setNudgeGif(randomImpatientGif()), 5000);
+    const timer = setTimeout(() => setNudgeGif(randomImpatientGif()), NUDGE_MS);
     return () => {
       clearTimeout(timer);
       setNudgeGif(null);
@@ -805,13 +806,21 @@ function PointRow({
         />
       )}
 
-      {/* Opponent's in-progress (unconfirmed) move lands here — green glow */}
-      {previewGlow && (
+      {/* Opponent's in-progress (unconfirmed) move landed here — glow the
+          landed TOKEN (top checker), not the whole point. */}
+      {previewGlow && count > 0 && (
         <motion.div
           data-testid={`preview-${p}`}
-          animate={{ opacity: [0.5, 0.95, 0.5] }}
+          animate={{ opacity: [0.55, 1, 0.55] }}
           transition={{ repeat: Infinity, duration: 1 }}
-          className="absolute inset-[1px] rounded-md border-2 border-emerald-400 bg-emerald-400/20 pointer-events-none z-10 shadow-[0_0_14px_rgba(52,211,153,0.6)]"
+          className="absolute rounded-full border-[3px] border-emerald-400 pointer-events-none z-20"
+          style={{
+            left: checkerX(count - 1) - 3,
+            top: checkerY - 3,
+            width: checker + 6,
+            height: checker + 6,
+            boxShadow: "0 0 14px rgba(52,211,153,0.85)",
+          }}
         />
       )}
 
