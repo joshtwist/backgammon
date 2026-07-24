@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -20,6 +21,7 @@ import {
   preloadImpatientGifs,
   randomImpatientGif,
 } from "../lib/impatience.ts";
+import { preloadHitGifs, reactionGif } from "../lib/hitgifs.ts";
 import { Checker } from "./Checker.tsx";
 import { DiceTray } from "./DiceTray.tsx";
 import { PlayerHUD } from "./PlayerHUD.tsx";
@@ -114,6 +116,23 @@ export function GameBoard({ state, send }: GameBoardProps) {
   useEffect(() => {
     void import("./DiceRoll3D.tsx");
   }, []);
+  useEffect(() => {
+    preloadHitGifs();
+  }, []);
+
+  // Points (absolute frame) where the opponent has a live, unconfirmed
+  // checker this turn — glowed green so the watcher sees the move unfold.
+  const previewGlow = useMemo(() => {
+    const set = new Set<number>();
+    const pc = pending.previewColor;
+    if (!pc) return set;
+    for (const m of pending.opponentPreview) {
+      const dest = moveDest(m);
+      if (dest === OFF) continue;
+      set.add(pc === "white" ? dest : 25 - dest);
+    }
+    return set;
+  }, [pending.opponentPreview, pending.previewColor]);
 
   const fieldRef = useRef<HTMLDivElement>(null);
   const [fieldSize, setFieldSize] = useState({ w: 0, h: 0 });
@@ -189,17 +208,21 @@ export function GameBoard({ state, send }: GameBoardProps) {
     return () => clearTimeout(timer);
   }, [reveal]);
 
-  // ── Impatience nudge: 5s of not rolling → a judgmental GIF ───────
+  // ── Impatience nudge: 5s idle (not rolling OR not moving) → a GIF ──
 
   const [nudgeGif, setNudgeGif] = useState<string | null>(null);
   useEffect(() => {
     preloadImpatientGifs();
   }, []);
 
-  const rollPending =
-    state.phase === "playing" && state.turn?.phase === "roll";
+  // Fires whether the active player is sitting on the roll or has rolled
+  // but isn't moving. The timer resets on any activity (turn change or a
+  // staged move), so someone actively dragging never triggers it.
+  const idlePending =
+    state.phase === "playing" &&
+    (state.turn?.phase === "roll" || state.turn?.phase === "move");
   useEffect(() => {
-    if (!rollPending) {
+    if (!idlePending) {
       setNudgeGif(null);
       return;
     }
@@ -208,7 +231,29 @@ export function GameBoard({ state, send }: GameBoardProps) {
       clearTimeout(timer);
       setNudgeGif(null);
     };
-  }, [rollPending, state.turnNumber]);
+  }, [idlePending, state.turnNumber, pending.staged.length]);
+
+  // ── Hit reaction GIF: I got sent to the bar on the opponent's turn ──
+
+  const [hitGif, setHitGif] = useState<string | null>(null);
+  const seenHitTurnRef = useRef<string | null>(null);
+  useEffect(() => {
+    const lt = state.lastTurn;
+    const key = lt ? `${state.turnNumber}:${lt.color}:${lt.hits}` : null;
+    if (key && key !== seenHitTurnRef.current) {
+      seenHitTurnRef.current = key;
+      // The opponent just moved and it sent one or more of MY checkers to
+      // the bar (lastTurn.hits counts the mover's opponent, i.e. me).
+      if (lt && lt.color !== you.color && lt.hits > 0) {
+        setHitGif(reactionGif(lt.hits));
+      }
+    }
+  }, [state.lastTurn, state.turnNumber, you.color]);
+  useEffect(() => {
+    if (!hitGif) return;
+    const timer = setTimeout(() => setHitGif(null), 2600);
+    return () => clearTimeout(timer);
+  }, [hitGif]);
 
   // ── Earthquake: any checker landing on the bar shakes the board ──
 
@@ -437,6 +482,7 @@ export function GameBoard({ state, send }: GameBoardProps) {
                   dragging={drag?.from === A}
                   highlighted={drag?.targets.has(A) ?? false}
                   armed={armedTarget === A}
+                  previewGlow={previewGlow.has(A)}
                   landing={landing?.p === A ? landing : null}
                   onDragStart={() => handleDragStart(A)}
                   onDrag={handleDragMove}
@@ -496,9 +542,30 @@ export function GameBoard({ state, send }: GameBoardProps) {
                 )}
               </AnimatePresence>
 
+              {/* Hit reaction: "damn" (1) / "I'm dead" (2+) when I'm sent
+                  to the bar. */}
+              <AnimatePresence>
+                {hitGif && (
+                  <motion.div
+                    data-testid="hit-gif"
+                    initial={{ scale: 0.5, opacity: 0, rotate: -6 }}
+                    animate={{ scale: 1, opacity: 1, rotate: 0 }}
+                    exit={{ scale: 0.7, opacity: 0 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 18 }}
+                    className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 pointer-events-none flex flex-col items-center gap-2"
+                  >
+                    <img
+                      src={hitGif}
+                      alt="You got hit!"
+                      className="h-36 rounded-xl shadow-2xl border-2 border-danger/70"
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               {/* Impatience nudge: someone is sitting on the dice */}
               <AnimatePresence>
-                {nudgeGif && rollPending && (
+                {nudgeGif && idlePending && (
                   <motion.div
                     data-testid="impatience-nudge"
                     initial={{ scale: 0.6, opacity: 0, y: 24 }}
@@ -637,6 +704,8 @@ interface PointRowProps {
   highlighted: boolean;
   /** The pointer is currently over this point mid-drag: drop will land here. */
   armed: boolean;
+  /** The opponent has a live, unconfirmed checker here (green glow). */
+  previewGlow: boolean;
   /** Entry offset for a checker that just landed here (slide-in). */
   landing: { dx: number; dy: number } | null;
   onDragStart: () => void;
@@ -657,6 +726,7 @@ function PointRow({
   dragging,
   highlighted,
   armed,
+  previewGlow,
   landing,
   onDragStart,
   onDrag,
@@ -732,6 +802,16 @@ function PointRow({
         <div
           data-testid={`armed-${p}`}
           className="absolute inset-[1px] rounded-md border-[3px] border-gold bg-gold/25 pointer-events-none z-10 shadow-[0_0_14px_rgba(245,158,11,0.5)]"
+        />
+      )}
+
+      {/* Opponent's in-progress (unconfirmed) move lands here — green glow */}
+      {previewGlow && (
+        <motion.div
+          data-testid={`preview-${p}`}
+          animate={{ opacity: [0.5, 0.95, 0.5] }}
+          transition={{ repeat: Infinity, duration: 1 }}
+          className="absolute inset-[1px] rounded-md border-2 border-emerald-400 bg-emerald-400/20 pointer-events-none z-10 shadow-[0_0_14px_rgba(52,211,153,0.6)]"
         />
       )}
 

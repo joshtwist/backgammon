@@ -117,6 +117,8 @@ test.describe("Rules through the UI", () => {
       "data-count-you",
       "1",
     );
+    // ...and the victim gets a reaction GIF for being hit.
+    await expect(page1.getByTestId("hit-gif")).toBeVisible();
     await expect(page1.getByTestId("roll-btn")).toBeVisible();
 
     // White enters with the 5 onto 20 — hitting black's blot right back.

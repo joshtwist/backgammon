@@ -289,7 +289,9 @@ export function confirmTurn(
   }
 
   const board = validateTurn(state.board, turn.color, turn.dice, moves);
-  const lastTurn: LastTurn = { color: turn.color, dice: turn.dice, moves };
+  const foe = other(turn.color);
+  const hits = board[foe][BAR] - state.board[foe][BAR];
+  const lastTurn: LastTurn = { color: turn.color, dice: turn.dice, moves, hits };
 
   if (board[turn.color][OFF] === 15) {
     const kind = winKindOf(board, turn.color);
@@ -337,7 +339,7 @@ export function passNoMoves(state: GameState): GameState {
 
   return {
     ...state,
-    lastTurn: { color: state.turn.color, dice: state.turn.dice, moves: [] },
+    lastTurn: { color: state.turn.color, dice: state.turn.dice, moves: [], hits: 0 },
     turn: {
       color: other(state.turn.color),
       phase: "roll",

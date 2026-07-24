@@ -20,6 +20,7 @@ export type ClientMessage =
   | StartGameMessage
   | RollOpeningMessage
   | RollDiceMessage
+  | PreviewMovesMessage
   | ConfirmMovesMessage
   | CreateRematchMessage
   | PingMessage
@@ -53,10 +54,20 @@ export interface RollDiceMessage {
 }
 
 /**
+ * Live preview of my in-progress (unconfirmed) staged moves, sent on every
+ * stage/undo so the opponent can watch my turn unfold. The server relays
+ * it ephemerally (never applied to authoritative state) and it's cleared
+ * the moment the turn actually changes.
+ */
+export interface PreviewMovesMessage {
+  type: "preview_moves";
+  moves: Move[];
+}
+
+/**
  * Commit my whole turn as an ordered move sequence. The server validates
  * it atomically against the rules (including forced-play maximality) and
- * either applies it or rejects with an error message. Undo never reaches
- * the server: staging is purely client-local until this message.
+ * either applies it or rejects with an error message.
  */
 export interface ConfirmMovesMessage {
   type: "confirm_moves";
@@ -159,6 +170,12 @@ export interface TurnView {
   dice: DicePair | null;
   maxPlayable: number;
   forcedDie: Die | null;
+  /**
+   * The current player's in-progress staged moves (their own numbering),
+   * relayed live so the opponent sees the turn unfold. Empty when nothing
+   * is staged. Never authoritative — the board only changes on confirm.
+   */
+  preview: Move[];
 }
 
 /**

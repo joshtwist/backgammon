@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { OFF } from "../../shared/types.ts";
-import type { Move } from "../../shared/types.ts";
+import type { Color, Move } from "../../shared/types.ts";
 import type { ClientMessage, StateMessage } from "../../shared/protocol.ts";
 import { applyMoves, moveDest } from "../../shared/engine/board.ts";
 import { legalNextMoves, remainingDice } from "../../shared/engine/moves.ts";
@@ -34,11 +34,40 @@ export function usePendingMoves(
   const board = state.board;
   const dice = turn?.dice ?? null;
 
-  /** The board as the player currently sees it (staged moves applied). */
+  // The opponent's live, unconfirmed staged moves (their own numbering),
+  // relayed by the server so we can watch their turn unfold.
+  const opponentPreview = !isMyTurn && turn ? turn.preview : [];
+  const previewColor: Color | null =
+    !isMyTurn && turn && opponentPreview.length > 0 ? turn.color : null;
+
+  /**
+   * The board as the player currently sees it: my own staged moves on my
+   * turn, or the opponent's live preview on theirs.
+   */
   const displayBoard = useMemo(() => {
-    if (!isMyMove || staged.length === 0) return board;
-    return applyMoves(board, you.color, staged);
-  }, [board, staged, isMyMove, you.color]);
+    try {
+      if (isMyMove && staged.length > 0) {
+        return applyMoves(board, you.color, staged);
+      }
+      if (previewColor && opponentPreview.length > 0) {
+        return applyMoves(board, previewColor, opponentPreview);
+      }
+    } catch {
+      // A malformed preview should never break the board render.
+    }
+    return board;
+  }, [board, staged, isMyMove, you.color, previewColor, opponentPreview]);
+
+  // Send my staged moves to the server on every change so the opponent
+  // sees them live. Only while it's actually my move.
+  const lastSentRef = useRef<string>("");
+  useEffect(() => {
+    if (!isMyMove) return;
+    const key = JSON.stringify(staged);
+    if (key === lastSentRef.current) return;
+    lastSentRef.current = key;
+    send({ type: "preview_moves", moves: staged });
+  }, [staged, isMyMove, send]);
 
   /** Legal next single moves given what's already staged. */
   const nextMoves = useMemo(() => {
@@ -156,5 +185,9 @@ export function usePendingMoves(
     remaining: Math.max(0, maxPlayable - staged.length),
     isMyTurn,
     isMyMove,
+    /** Opponent's live staged moves (their own numbering) + their color,
+     *  for glowing the in-progress pieces on the watcher's screen. */
+    opponentPreview,
+    previewColor,
   };
 }

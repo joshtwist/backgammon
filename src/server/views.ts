@@ -1,3 +1,4 @@
+import type { Move } from "../shared/types.ts";
 import type { GameState } from "../shared/engine/game.ts";
 import type {
   GameCompleteMessage,
@@ -5,10 +6,15 @@ import type {
   StateMessage,
 } from "../shared/protocol.ts";
 
-/** The personalized snapshot for one player. */
+/**
+ * The personalized snapshot for one player. `preview` is the current
+ * player's live, unconfirmed staged moves, relayed so the opponent can
+ * watch the turn unfold; it's ephemeral and never part of the board.
+ */
 export function getPlayerView(
   state: GameState,
   playerId: string,
+  preview: Move[] = [],
 ): StateMessage {
   const self = state.players.find((p) => p.playerId === playerId);
   if (!self) {
@@ -34,7 +40,9 @@ export function getPlayerView(
     })),
     board: state.board,
     opening: state.opening,
-    turn: state.turn,
+    turn: state.turn
+      ? { ...state.turn, preview: state.turn.phase === "move" ? preview : [] }
+      : null,
     turnNumber: state.turnNumber,
     lastTurn: state.lastTurn,
     series: state.series,

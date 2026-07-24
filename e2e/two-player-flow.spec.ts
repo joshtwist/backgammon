@@ -182,4 +182,32 @@ test.describe("Two-player game flow", () => {
     await ctx1.close();
     await ctx2.close();
   });
+
+  test("opponent sees staged moves live, with a green glow, and undo syncs", async ({
+    browser,
+  }) => {
+    const { ctx1, ctx2, page1, page2 } = await setupTwoPlayers(browser);
+    const { gameUrl } = await createGame(page1);
+    await joinAs(page1, "Josh", "rocket");
+    await page2.goto(gameUrl);
+    await joinAs(page2, "Anna", "cat");
+    await page1.getByTestId("start-game-btn").click();
+    await playOpening(page1, page2, 5, 3); // white (page1) to move
+
+    // White stages a move WITHOUT confirming.
+    await dragMove(page1, 13, 8);
+
+    // Anna (watching) sees the checker move live and the landing point
+    // glowing green — before any confirm.
+    await expectPointCount(page2, 8, 4);
+    await expect(page2.getByTestId("preview-8")).toBeVisible();
+
+    // White undoes — Anna's view reverts in sync.
+    await page1.getByTestId("undo-btn").click();
+    await expectPointCount(page2, 8, 3);
+    await expect(page2.getByTestId("preview-8")).toHaveCount(0);
+
+    await ctx1.close();
+    await ctx2.close();
+  });
 });

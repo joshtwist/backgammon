@@ -64,6 +64,12 @@ export class GameRoom extends DurableObject<Env> {
   private gameState: GameState | null = null;
   /** TEST_HOOKS-only queue of predetermined die values (see protocol). */
   private forcedRolls: Die[] | null = null;
+  /**
+   * The current player's live, unconfirmed staged moves. Ephemeral and
+   * in-memory only (never persisted) — relayed to the opponent so they can
+   * watch the turn unfold. Cleared whenever the turn actually changes.
+   */
+  private previewMoves: Move[] = [];
 
   // ── State persistence ────────────────────────────────────────────
 
@@ -145,7 +151,7 @@ export class GameRoom extends DurableObject<Env> {
 
       const isPlayer = state.players.some((p) => p.playerId === playerId);
       if (isPlayer) {
-        this.send(ws, getPlayerView(state, playerId));
+        this.send(ws, getPlayerView(state, playerId, this.previewMoves));
       } else {
         this.send(ws, info);
       }
@@ -312,6 +318,7 @@ export class GameRoom extends DurableObject<Env> {
     if (state.phase !== "playing" || state.turn?.phase !== "no_moves") return;
 
     state = passNoMoves(state);
+    this.previewMoves = [];
     await this.saveState(state);
     this.broadcastState(state);
   }
@@ -345,6 +352,10 @@ export class GameRoom extends DurableObject<Env> {
 
       case "roll_dice":
         await this.handleRollDice(ws);
+        return;
+
+      case "preview_moves":
+        await this.handlePreviewMoves(ws, msg.moves);
         return;
 
       case "confirm_moves":
@@ -437,6 +448,7 @@ export class GameRoom extends DurableObject<Env> {
     let state = await this.loadState();
     const die = await this.rollDie();
     state = rollOpeningDie(state, playerId, die);
+    this.previewMoves = [];
     await this.saveState(state);
     this.broadcastState(state);
 
@@ -450,29 +462,19 @@ export class GameRoom extends DurableObject<Env> {
     let state = await this.loadState();
     const dice: DicePair = [await this.rollDie(), await this.rollDie()];
     state = rollDice(state, playerId, dice);
+    this.previewMoves = []; // new turn — drop any stale preview
     await this.saveState(state);
     this.broadcastState(state);
 
     await this.armNoMovesAlarmIfNeeded(state);
   }
 
-  private async armNoMovesAlarmIfNeeded(state: GameState): Promise<void> {
-    if (state.phase === "playing" && state.turn?.phase === "no_moves") {
-      await this.ctx.storage.setAlarm(Date.now() + NO_MOVES_DELAY_MS);
-    }
-  }
-
-  private async handleConfirmMoves(
-    ws: WebSocket,
-    moves: unknown,
-  ): Promise<void> {
-    const playerId = this.requirePlayerId(ws);
-
-    // Shape-validate untrusted JSON before it reaches the engine.
+  /** Shape-validate an untrusted move list from the wire. */
+  private sanitizeMoves(moves: unknown): Move[] {
     if (!Array.isArray(moves) || moves.length > 4) {
       throw new Error("Malformed move list");
     }
-    const clean: Move[] = moves.map((m) => {
+    return moves.map((m) => {
       const from = (m as Move)?.from;
       const die = (m as Move)?.die;
       if (
@@ -487,9 +489,50 @@ export class GameRoom extends DurableObject<Env> {
       }
       return { from, die };
     });
+  }
+
+  /**
+   * Relay the current player's live staged moves to the opponent. Purely
+   * ephemeral: never touches authoritative state or storage, ignored from
+   * anyone who isn't the player currently on move.
+   */
+  private async handlePreviewMoves(
+    ws: WebSocket,
+    moves: unknown,
+  ): Promise<void> {
+    const playerId = this.getPlayerIdFromSocket(ws);
+    if (!playerId) return;
+    const state = await this.loadState();
+    const me = state.players.find((p) => p.playerId === playerId);
+    if (
+      state.phase !== "playing" ||
+      state.turn?.phase !== "move" ||
+      !me ||
+      me.color !== state.turn.color
+    ) {
+      return; // not your move to preview
+    }
+    this.previewMoves = this.sanitizeMoves(moves);
+    this.broadcastState(state); // no saveState — preview is ephemeral
+  }
+
+  private async armNoMovesAlarmIfNeeded(state: GameState): Promise<void> {
+    if (state.phase === "playing" && state.turn?.phase === "no_moves") {
+      await this.ctx.storage.setAlarm(Date.now() + NO_MOVES_DELAY_MS);
+    }
+  }
+
+  private async handleConfirmMoves(
+    ws: WebSocket,
+    moves: unknown,
+  ): Promise<void> {
+    const playerId = this.requirePlayerId(ws);
+
+    const clean = this.sanitizeMoves(moves);
 
     let state = await this.loadState();
     state = confirmTurn(state, playerId, clean);
+    this.previewMoves = []; // turn committed — clear the live preview
 
     // If this turn ended the game, pick a celebration GIF and pin it to
     // the state so reconnecting clients see the same one.
@@ -608,6 +651,7 @@ export class GameRoom extends DurableObject<Env> {
         forcedDie: null,
       },
     };
+    this.previewMoves = [];
     await this.saveState(state);
     this.broadcastState(state);
   }

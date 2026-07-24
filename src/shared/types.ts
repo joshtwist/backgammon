@@ -105,6 +105,8 @@ export interface LastTurn {
   dice: DicePair;
   /** Empty array = the player danced (no legal moves). */
   moves: Move[];
+  /** How many of the OPPONENT's checkers this turn sent to the bar. */
+  hits: number;
 }
 
 export interface OpeningState {
