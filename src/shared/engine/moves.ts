@@ -193,6 +193,51 @@ export function legalNextMoves(
 }
 
 /**
+ * Every legal complete turn for this roll: each entry is a maximal-length
+ * move sequence (length === maxPlayable), so any of them may be passed
+ * straight to `validateTurn`/`confirmTurn`. A dance yields `[[]]` — one
+ * turn, playing nothing.
+ *
+ * Sequences that reach the same position by a different order of the same
+ * moves are deduped, so callers (the bot) score each distinct outcome once.
+ *
+ * `board` is the board as it stood at the START of the turn.
+ */
+export function enumerateTurns(
+  board: BoardState,
+  color: Color,
+  dice: DicePair,
+): Move[][] {
+  const { maxPlayable } = analyzeRoll(board, color, dice);
+  if (maxPlayable === 0) return [[]];
+
+  const turns: Move[][] = [];
+  const seen = new Set<string>();
+
+  const walk = (staged: Move[]): void => {
+    if (staged.length === maxPlayable) {
+      // Key on the resulting position + the multiset of dice used, so
+      // transpositions collapse but genuinely different plays don't.
+      const after = applyMoves(board, color, staged);
+      const key = `${after.white.join(",")}|${after.black.join(",")}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        turns.push(staged);
+      }
+      return;
+    }
+    for (const move of legalNextMoves(board, color, dice, staged)) {
+      walk([...staged, move]);
+    }
+  };
+
+  walk([]);
+  // `legalNextMoves` only offers moves that extend to a maximal turn, so
+  // this can't come back empty — but never strand the caller if it did.
+  return turns.length > 0 ? turns : [[]];
+}
+
+/**
  * Authoritative whole-turn validation: applies `moves` in order, checking
  * every rule, and returns the resulting board. Throws a player-readable
  * message on any violation. An empty `moves` is only valid when the roll

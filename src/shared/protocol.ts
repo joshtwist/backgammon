@@ -17,6 +17,7 @@ import type {
 export type ClientMessage =
   | JoinMessage
   | ReconnectMessage
+  | AddBotMessage
   | StartGameMessage
   | RollOpeningMessage
   | RollDiceMessage
@@ -37,6 +38,15 @@ export interface JoinMessage {
 export interface ReconnectMessage {
   type: "reconnect";
   playerId: string;
+}
+
+/**
+ * Fill the empty seat with the computer opponent (lobby only). Sent from
+ * the lobby's host controls; the server seats a bot Player and the normal
+ * creator-only start flow takes over from there.
+ */
+export interface AddBotMessage {
+  type: "add_bot";
 }
 
 export interface StartGameMessage {
@@ -141,6 +151,8 @@ export interface PlayerView {
   icon: PlayerIcon;
   color: Color;
   connected: boolean;
+  /** The computer opponent — never shows a disconnected indicator. */
+  isBot: boolean;
 }
 
 export interface SelfView {

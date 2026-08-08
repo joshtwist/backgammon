@@ -1,4 +1,13 @@
-import { BAR, MAX_PLAYERS, OFF, WIN_POINTS } from "../types.ts";
+import {
+  BAR,
+  BOT_ICON,
+  BOT_NAME,
+  BOT_PLAYER_ID,
+  MAX_PLAYERS,
+  OFF,
+  PLAYER_ICONS,
+  WIN_POINTS,
+} from "../types.ts";
 import type {
   BoardState,
   Color,
@@ -138,6 +147,58 @@ export function addPlayer(
     creatorId: state.creatorId || playerId,
     series,
   };
+}
+
+/**
+ * Seat the computer opponent. Unlike `addPlayer` there's no socket and no
+ * chosen identity: the bot takes whichever color is free and a reserved
+ * name/icon. It's a real `Player` so every turn-ownership check
+ * (`activePlayerOrThrow`) and the exactly-2-players start gate work
+ * unchanged — the DO drives its turns via an alarm instead of a socket.
+ */
+export function addBot(state: GameState): GameState {
+  if (state.phase !== "lobby") {
+    throw new Error("Cannot add a computer: the game has already started");
+  }
+  if (state.players.length >= MAX_PLAYERS) {
+    throw new Error("Cannot add a computer: the game is full");
+  }
+  if (state.players.length === 0) {
+    throw new Error("Join the game before adding a computer opponent");
+  }
+  if (state.players.some((p) => p.isBot)) {
+    throw new Error("There is already a computer opponent");
+  }
+
+  const taken = new Set(state.players.map((p) => p.color));
+  const color: Color = taken.has("white") ? "black" : "white";
+  const bot: Player = {
+    playerId: BOT_PLAYER_ID,
+    name: BOT_NAME,
+    // Fall back to any free icon if the human happens to have taken the
+    // bot's default one.
+    icon: state.players.some((p) => p.icon === BOT_ICON)
+      ? (PLAYER_ICONS.find((i) => !state.players.some((p) => p.icon === i)) ??
+        BOT_ICON)
+      : BOT_ICON,
+    color,
+    connected: true,
+    isBot: true,
+  };
+
+  return { ...state, players: [...state.players, bot] };
+}
+
+/** The computer opponent, if this game has one. */
+export function botPlayer(state: GameState): Player | null {
+  return state.players.find((p) => p.isBot) ?? null;
+}
+
+/** True when it is currently the bot's turn to act. */
+export function isBotTurn(state: GameState): boolean {
+  if (state.phase !== "playing" || !state.turn) return false;
+  const bot = botPlayer(state);
+  return bot !== null && bot.color === state.turn.color;
 }
 
 export function setPlayerConnected(

@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Users, Play, Swords } from "lucide-react";
+import { Users, Play, Swords, Bot } from "lucide-react";
 import type { StateMessage, ClientMessage } from "../../shared/protocol.ts";
 import { MAX_PLAYERS } from "../../shared/types.ts";
 import { ICON_MAP, ICON_COLORS } from "../lib/icons.ts";
@@ -21,6 +21,11 @@ export function Lobby({ state, gameId, send }: LobbyProps) {
     send({ type: "start_game" });
   }
 
+  function handleAddBot() {
+    if (canStart) return;
+    send({ type: "add_bot" });
+  }
+
   return (
     <div className="flex flex-1 flex-col px-6 py-8 max-w-lg w-full mx-auto">
       <div className="text-center mb-6">
@@ -30,7 +35,9 @@ export function Lobby({ state, gameId, send }: LobbyProps) {
         <p className="text-slate-400 mt-1">
           {seeded
             ? `Game ${series.gamesPlayed + 1} of the series`
-            : "Waiting for an opponent"}
+            : canStart
+              ? "Both players in — ready to roll"
+              : "Waiting for an opponent"}
         </p>
       </div>
 
@@ -127,9 +134,20 @@ export function Lobby({ state, gameId, send }: LobbyProps) {
         />
       </div>
       {!canStart && (
-        <p className="text-center text-slate-400 text-sm mb-6">
-          Tap above to invite a friend — backgammon takes exactly two
-        </p>
+        <>
+          <p className="text-center text-slate-400 text-sm mb-4">
+            Tap above to invite a friend — backgammon takes exactly two
+          </p>
+          {/* No friend around? Fill the empty seat with the computer. */}
+          <button
+            data-testid="add-bot-btn"
+            onClick={handleAddBot}
+            className="w-full py-3 px-6 mb-6 bg-slate-800/80 hover:bg-slate-700 active:bg-slate-600 border border-slate-600 text-slate-200 font-semibold rounded-xl transition-colors duration-200 cursor-pointer flex items-center justify-center gap-2"
+          >
+            <Bot className="w-5 h-5" />
+            Play against the computer
+          </button>
+        </>
       )}
       {canStart && <div className="mb-3" />}
 

@@ -219,8 +219,12 @@ export function GameBoard({ state, send }: GameBoardProps) {
   // it never chases anyone during normal play. The timer resets on any
   // activity (turn change or a staged move).
   const NUDGE_MS = 60_000;
+  const activeIsBot =
+    state.players.find((p) => p.color === state.turn?.color)?.isBot === true;
   const idlePending =
     state.phase === "playing" &&
+    // No point being impatient at a computer.
+    !activeIsBot &&
     (state.turn?.phase === "roll" || state.turn?.phase === "move");
   useEffect(() => {
     if (!idlePending) {

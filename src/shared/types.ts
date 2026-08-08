@@ -35,7 +35,14 @@ export interface Player {
   icon: PlayerIcon;
   color: Color;
   connected: boolean;
+  /** The computer opponent. Its turns are driven by the server, not a socket. */
+  isBot?: boolean;
 }
+
+/** Fixed identity of the computer opponent (only ever one per game). */
+export const BOT_PLAYER_ID = "bot";
+export const BOT_NAME = "Computer";
+export const BOT_ICON: PlayerIcon = "gamepad-2";
 
 // ── Board ──────────────────────────────────────────────────────────
 //

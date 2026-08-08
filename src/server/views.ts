@@ -37,6 +37,7 @@ export function getPlayerView(
       icon: p.icon,
       color: p.color,
       connected: p.connected,
+      isBot: p.isBot === true,
     })),
     board: state.board,
     opening: state.opening,

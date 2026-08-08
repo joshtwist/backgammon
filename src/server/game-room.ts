@@ -12,11 +12,14 @@ import type {
 import type { ClientMessage, ServerMessage } from "../shared/protocol.ts";
 import { assertValidBoard } from "../shared/engine/board.ts";
 import {
+  addBot,
   addPlayer,
+  botPlayer,
   confirmTurn,
   createGame,
   createRematch,
   buildSeed,
+  isBotTurn,
   passNoMoves,
   rollDice,
   rollOpeningDie,
@@ -25,6 +28,7 @@ import {
   startGame,
 } from "../shared/engine/game.ts";
 import type { GameState } from "../shared/engine/game.ts";
+import { pickTurn } from "./bot.ts";
 import { buildCompleteMessage, getPlayerView, lobbyInfo } from "./views.ts";
 
 export interface Env {
@@ -59,6 +63,13 @@ const CELEBRATION_GIFS = [
 
 /** How long the "no legal moves" banner shows before the turn auto-passes. */
 const NO_MOVES_DELAY_MS = 2500;
+
+/** Beat before the computer rolls, so its turn doesn't snap past you. */
+const BOT_ROLL_DELAY_MS = 900;
+/** Beat between the computer's dice landing and it starting to move. */
+const BOT_MOVE_DELAY_MS = 1100;
+/** How long the computer's staged moves show before it commits them. */
+const BOT_PREVIEW_MS = 800;
 
 export class GameRoom extends DurableObject<Env> {
   private gameState: GameState | null = null;
@@ -311,16 +322,152 @@ export class GameRoom extends DurableObject<Env> {
     await this.webSocketClose(ws, 1006, "error", false);
   }
 
-  // ── Alarm handler (no-legal-moves auto-pass) ─────────────────────
+  // ── Alarm handler (no-legal-moves auto-pass + computer turns) ────
+  //
+  // The DO's single alarm slot drives everything that happens without a
+  // client message. Each tick does one step and re-arms if more is due, so
+  // the DO can hibernate in between and the whole chain survives a restart
+  // (it's re-derived from persisted state, never from in-memory context).
 
   async alarm(): Promise<void> {
-    let state = await this.loadState();
-    if (state.phase !== "playing" || state.turn?.phase !== "no_moves") return;
+    const state = await this.loadState();
 
-    state = passNoMoves(state);
+    if (state.phase === "opening") {
+      await this.rollBotOpeningDie(state);
+      return;
+    }
+    if (state.phase !== "playing" || !state.turn) return;
+
+    if (state.turn.phase === "no_moves") {
+      await this.passTurn(state);
+      return;
+    }
+
+    if (isBotTurn(state)) {
+      await this.playBotStep(state);
+    }
+  }
+
+  /** The computer taps its own opening die (including after a tie). */
+  private async rollBotOpeningDie(state: GameState): Promise<void> {
+    const bot = botPlayer(state);
+    if (!bot || !state.opening) return;
+    if (state.opening.rolls[bot.color] !== null) return;
+
+    const die = await this.rollDie();
+    const next = rollOpeningDie(state, bot.playerId, die);
     this.previewMoves = [];
-    await this.saveState(state);
-    this.broadcastState(state);
+    await this.saveState(next);
+    this.broadcastState(next);
+    await this.scheduleNext(next);
+  }
+
+  /** Auto-pass a danced turn, then hand off to whatever comes next. */
+  private async passTurn(state: GameState): Promise<void> {
+    const next = passNoMoves(state);
+    this.previewMoves = [];
+    await this.saveState(next);
+    this.broadcastState(next);
+    await this.scheduleNext(next);
+  }
+
+  /**
+   * One step of the computer's turn: roll, or choose and commit moves.
+   * Split across alarm ticks so each phase is visible on the human's
+   * screen (dice land, then checkers move) instead of the turn resolving
+   * in a single silent jump.
+   */
+  private async playBotStep(state: GameState): Promise<void> {
+    const bot = botPlayer(state);
+    if (!bot || !state.turn) return;
+
+    if (state.turn.phase === "roll") {
+      const dice: DicePair = [await this.rollDie(), await this.rollDie()];
+      const rolled = rollDice(state, bot.playerId, dice);
+      this.previewMoves = [];
+      await this.saveState(rolled);
+      this.broadcastState(rolled);
+      await this.scheduleNext(rolled);
+      return;
+    }
+
+    if (state.turn.phase !== "move" || !state.turn.dice) return;
+
+    const moves = pickTurn(state.board, bot.color, state.turn.dice);
+    const turnNumber = state.turnNumber;
+
+    // Show the chosen moves as a live preview first — this reuses the same
+    // relay a human's staged moves go through, so the human watches the
+    // computer's checkers slide before they're committed.
+    if (moves.length > 0) {
+      this.previewMoves = moves;
+      this.broadcastState(state);
+      await sleep(BOT_PREVIEW_MS);
+    }
+
+    // The human can't legally change the position during the bot's turn,
+    // but re-check before committing so a reconnect/test hook mid-preview
+    // can never make us apply a turn against a different board.
+    const fresh = await this.loadState();
+    if (
+      fresh.phase !== "playing" ||
+      fresh.turnNumber !== turnNumber ||
+      !isBotTurn(fresh) ||
+      fresh.turn?.phase !== "move"
+    ) {
+      this.previewMoves = [];
+      this.broadcastState(fresh);
+      await this.scheduleNext(fresh);
+      return;
+    }
+
+    // Re-pick against the fresh board if anything shifted underneath us.
+    const finalMoves =
+      fresh.board === state.board
+        ? moves
+        : pickTurn(fresh.board, bot.color, fresh.turn.dice!);
+
+    const next = this.withCelebration(
+      confirmTurn(fresh, bot.playerId, finalMoves),
+    );
+    this.previewMoves = [];
+    await this.saveState(next);
+    this.broadcastState(next);
+    await this.scheduleNext(next);
+  }
+
+  /**
+   * Arm the alarm for whatever the server owes next: the no-moves pause,
+   * or the computer's turn. Nothing to do when a human is on move.
+   */
+  private async scheduleNext(state: GameState): Promise<void> {
+    // Opening: the computer still owes its own die (also after a tie).
+    if (state.phase === "opening" && state.opening) {
+      const bot = botPlayer(state);
+      if (bot && state.opening.rolls[bot.color] === null) {
+        await this.ctx.storage.setAlarm(Date.now() + BOT_ROLL_DELAY_MS);
+      }
+      return;
+    }
+
+    if (state.phase !== "playing" || !state.turn) return;
+
+    if (state.turn.phase === "no_moves") {
+      await this.ctx.storage.setAlarm(Date.now() + NO_MOVES_DELAY_MS);
+      return;
+    }
+    if (!isBotTurn(state)) return;
+
+    const delay =
+      state.turn.phase === "roll" ? BOT_ROLL_DELAY_MS : BOT_MOVE_DELAY_MS;
+    await this.ctx.storage.setAlarm(Date.now() + delay);
+  }
+
+  /** Pin a celebration GIF the first time a game reaches "complete". */
+  private withCelebration(state: GameState): GameState {
+    if (state.phase !== "complete" || state.celebrationGif) return state;
+    const gifIndex = Math.floor(Math.random() * CELEBRATION_GIFS.length);
+    return { ...state, celebrationGif: CELEBRATION_GIFS[gifIndex] };
   }
 
   // ── Message dispatch ─────────────────────────────────────────────
@@ -340,6 +487,10 @@ export class GameRoom extends DurableObject<Env> {
 
       case "reconnect":
         await this.handleReconnect(ws, msg.playerId);
+        return;
+
+      case "add_bot":
+        await this.handleAddBot(ws);
         return;
 
       case "start_game":
@@ -435,12 +586,24 @@ export class GameRoom extends DurableObject<Env> {
     return playerId;
   }
 
+  private async handleAddBot(ws: WebSocket): Promise<void> {
+    // Only a player already in the lobby can fill the empty seat.
+    this.requirePlayerId(ws);
+    let state = await this.loadState();
+    state = addBot(state);
+    await this.saveState(state);
+    this.broadcastState(state);
+  }
+
   private async handleStartGame(ws: WebSocket): Promise<void> {
     const playerId = this.requirePlayerId(ws);
     let state = await this.loadState();
     state = startGame(state, playerId);
     await this.saveState(state);
     this.broadcastState(state);
+
+    // In a game against the computer, it rolls its own opening die.
+    await this.scheduleNext(state);
   }
 
   private async handleRollOpening(ws: WebSocket): Promise<void> {
@@ -452,9 +615,9 @@ export class GameRoom extends DurableObject<Env> {
     await this.saveState(state);
     this.broadcastState(state);
 
-    // The opening roll can theoretically land the first player in
-    // no_moves; keep the auto-pass path uniform.
-    await this.armNoMovesAlarmIfNeeded(state);
+    // Covers the computer's own opening die, a tie re-roll, and the
+    // (theoretical) case where the opening roll lands in no_moves.
+    await this.scheduleNext(state);
   }
 
   private async handleRollDice(ws: WebSocket): Promise<void> {
@@ -466,7 +629,7 @@ export class GameRoom extends DurableObject<Env> {
     await this.saveState(state);
     this.broadcastState(state);
 
-    await this.armNoMovesAlarmIfNeeded(state);
+    await this.scheduleNext(state);
   }
 
   /** Shape-validate an untrusted move list from the wire. */
@@ -516,12 +679,6 @@ export class GameRoom extends DurableObject<Env> {
     this.broadcastState(state); // no saveState — preview is ephemeral
   }
 
-  private async armNoMovesAlarmIfNeeded(state: GameState): Promise<void> {
-    if (state.phase === "playing" && state.turn?.phase === "no_moves") {
-      await this.ctx.storage.setAlarm(Date.now() + NO_MOVES_DELAY_MS);
-    }
-  }
-
   private async handleConfirmMoves(
     ws: WebSocket,
     moves: unknown,
@@ -531,18 +688,16 @@ export class GameRoom extends DurableObject<Env> {
     const clean = this.sanitizeMoves(moves);
 
     let state = await this.loadState();
-    state = confirmTurn(state, playerId, clean);
+    // If this turn ended the game, pin a celebration GIF to the state so
+    // reconnecting clients see the same one.
+    state = this.withCelebration(confirmTurn(state, playerId, clean));
     this.previewMoves = []; // turn committed — clear the live preview
-
-    // If this turn ended the game, pick a celebration GIF and pin it to
-    // the state so reconnecting clients see the same one.
-    if (state.phase === "complete" && !state.celebrationGif) {
-      const gifIndex = Math.floor(Math.random() * CELEBRATION_GIFS.length);
-      state = { ...state, celebrationGif: CELEBRATION_GIFS[gifIndex] };
-    }
 
     await this.saveState(state);
     this.broadcastState(state);
+
+    // It may now be the computer's turn.
+    await this.scheduleNext(state);
   }
 
   /**
@@ -654,10 +809,17 @@ export class GameRoom extends DurableObject<Env> {
     this.previewMoves = [];
     await this.saveState(state);
     this.broadcastState(state);
+
+    // A test may hand the turn straight to the computer.
+    await this.scheduleNext(state);
   }
 }
 
 // ── Utility ────────────────────────────────────────────────────────
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 const ALPHANUM = "abcdefghijklmnopqrstuvwxyz0123456789";
 
