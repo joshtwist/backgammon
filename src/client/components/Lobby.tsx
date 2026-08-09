@@ -1,7 +1,13 @@
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { Users, Play, Swords, Bot } from "lucide-react";
 import type { StateMessage, ClientMessage } from "../../shared/protocol.ts";
-import { MAX_PLAYERS } from "../../shared/types.ts";
+import {
+  BOT_DIFFICULTIES,
+  BOT_DIFFICULTY_LABELS,
+  MAX_PLAYERS,
+} from "../../shared/types.ts";
+import type { BotDifficulty } from "../../shared/types.ts";
 import { ICON_MAP, ICON_COLORS } from "../lib/icons.ts";
 import { ShareButton } from "./ShareButton.tsx";
 import { PLAYER_ICONS } from "../../shared/types.ts";
@@ -12,9 +18,17 @@ interface LobbyProps {
   send: (msg: ClientMessage) => void;
 }
 
+/** What each setting actually changes about how the computer plays. */
+const DIFFICULTY_BLURB: Record<BotDifficulty, string> = {
+  easy: "Misses a lot of good moves",
+  medium: "Plays solidly, slips occasionally",
+  hard: "No slips, and thinks a move ahead",
+};
+
 export function Lobby({ state, gameId, send }: LobbyProps) {
   const { you, players, series, seeded } = state;
   const canStart = players.length === MAX_PLAYERS;
+  const [difficulty, setDifficulty] = useState<BotDifficulty>("medium");
 
   function handleStart() {
     if (!canStart) return;
@@ -23,7 +37,7 @@ export function Lobby({ state, gameId, send }: LobbyProps) {
 
   function handleAddBot() {
     if (canStart) return;
-    send({ type: "add_bot" });
+    send({ type: "add_bot", difficulty });
   }
 
   return (
@@ -90,6 +104,14 @@ export function Lobby({ state, gameId, send }: LobbyProps) {
                   {isYou && (
                     <span className="text-slate-400 text-sm ml-1">(you)</span>
                   )}
+                  {player.isBot && player.botDifficulty && (
+                    <span
+                      data-testid="bot-difficulty"
+                      className="text-slate-400 text-sm ml-1"
+                    >
+                      ({BOT_DIFFICULTY_LABELS[player.botDifficulty]})
+                    </span>
+                  )}
                 </span>
                 {/* Checker color chip */}
                 <span
@@ -139,14 +161,41 @@ export function Lobby({ state, gameId, send }: LobbyProps) {
             Tap above to invite a friend — backgammon takes exactly two
           </p>
           {/* No friend around? Fill the empty seat with the computer. */}
-          <button
-            data-testid="add-bot-btn"
-            onClick={handleAddBot}
-            className="w-full py-3 px-6 mb-6 bg-slate-800/80 hover:bg-slate-700 active:bg-slate-600 border border-slate-600 text-slate-200 font-semibold rounded-xl transition-colors duration-200 cursor-pointer flex items-center justify-center gap-2"
-          >
-            <Bot className="w-5 h-5" />
-            Play against the computer
-          </button>
+          <div className="mb-6">
+            <div
+              role="group"
+              aria-label="Computer difficulty"
+              className="flex gap-1.5 mb-2"
+            >
+              {BOT_DIFFICULTIES.map((level) => (
+                <button
+                  key={level}
+                  type="button"
+                  data-testid={`difficulty-${level}`}
+                  aria-pressed={difficulty === level}
+                  onClick={() => setDifficulty(level)}
+                  className={`flex-1 py-2 text-sm font-semibold rounded-lg border transition-colors duration-200 cursor-pointer ${
+                    difficulty === level
+                      ? "bg-gold/20 border-gold/60 text-gold"
+                      : "bg-slate-900/40 border-slate-700 text-slate-400 hover:bg-slate-800"
+                  }`}
+                >
+                  {BOT_DIFFICULTY_LABELS[level]}
+                </button>
+              ))}
+            </div>
+            <button
+              data-testid="add-bot-btn"
+              onClick={handleAddBot}
+              className="w-full py-3 px-6 bg-slate-800/80 hover:bg-slate-700 active:bg-slate-600 border border-slate-600 text-slate-200 font-semibold rounded-xl transition-colors duration-200 cursor-pointer flex items-center justify-center gap-2"
+            >
+              <Bot className="w-5 h-5" />
+              Play against the computer
+            </button>
+            <p className="text-center text-slate-500 text-xs mt-2">
+              {DIFFICULTY_BLURB[difficulty]}
+            </p>
+          </div>
         </>
       )}
       {canStart && <div className="mb-3" />}

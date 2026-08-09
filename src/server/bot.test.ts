@@ -6,6 +6,15 @@ import { enumerateTurns, validateTurn } from "../shared/engine/moves.ts";
 import { pos } from "../shared/engine/testkit.ts";
 import { pickTurn } from "./bot.ts";
 
+/**
+ * Difficulty slips are decided by `random() < slipChance`, so a random()
+ * pinned at 1 never slips and one pinned at 0 always slips (and then
+ * picks the first candidate). Tactical assertions use `noSlip` so they
+ * test the heuristic itself rather than the dice of the slip roll.
+ */
+const noSlip = () => 1;
+const alwaysSlip = () => 0;
+
 describe("enumerateTurns", () => {
   it("returns only maximal, legal turns from the start position", () => {
     const board = startBoard();
@@ -81,7 +90,7 @@ describe("pickTurn", () => {
   it("takes an available hit", () => {
     // Black has a lone blot on white's 5 point; white can hit from 6 with a 1.
     const board = pos({ 6: 2, 13: 5, 8: 3, 24: 5 }, { 20: 1, 6: 8, 13: 6 });
-    const moves = pickTurn(board, "white", [1, 3]);
+    const moves = pickTurn(board, "white", [1, 3], { random: noSlip });
     const after = applyMoves(board, "white", moves);
     expect(after.black[BAR]).toBe(1);
   });
@@ -89,21 +98,21 @@ describe("pickTurn", () => {
   it("prefers making a point over leaving two blots", () => {
     // 3-1 from the start position: the 5 point is the known best play.
     const board = startBoard();
-    const moves = pickTurn(board, "white", [3, 1]);
+    const moves = pickTurn(board, "white", [3, 1], { random: noSlip });
     const after = applyMoves(board, "white", moves);
     expect(after.white[5]).toBe(2);
   });
 
   it("bears off when racing", () => {
     const board = pos({ 6: 2, 5: 2, 4: 2, 3: 2, 2: 2, 1: 5 }, { 1: 15 });
-    const moves = pickTurn(board, "white", [6, 5]);
+    const moves = pickTurn(board, "white", [6, 5], { random: noSlip });
     const after = applyMoves(board, "white", moves);
     expect(after.white[OFF]).toBe(2);
   });
 
   it("enters from the bar rather than stalling", () => {
     const board = pos({ [BAR]: 1, 13: 5, 8: 3, 6: 6 }, { 6: 10, 13: 5 });
-    const moves = pickTurn(board, "white", [4, 2]);
+    const moves = pickTurn(board, "white", [4, 2], { random: noSlip });
     expect(moves.length).toBeGreaterThan(0);
     expect(moves[0].from).toBe(BAR);
     const after = applyMoves(board, "white", moves);
@@ -122,10 +131,123 @@ describe("pickTurn", () => {
     }
   });
 
-  it("is deterministic for a given position", () => {
+  it("is deterministic for a given position and difficulty", () => {
     const board = startBoard();
-    const a = pickTurn(board, "white", [6, 5]);
-    const b = pickTurn(board, "white", [6, 5]);
-    expect(a).toEqual(b);
+    // Hard never slips, so it needs no pinned RNG to repeat itself.
+    expect(pickTurn(board, "white", [6, 5], { difficulty: "hard" })).toEqual(
+      pickTurn(board, "white", [6, 5], { difficulty: "hard" }),
+    );
+    expect(pickTurn(board, "white", [6, 5], { random: noSlip })).toEqual(
+      pickTurn(board, "white", [6, 5], { random: noSlip }),
+    );
+  });
+});
+
+describe("difficulty", () => {
+  it("easy slips to a different (still legal) turn", () => {
+    const board = startBoard();
+    const dice: DicePair = [3, 1];
+
+    const best = pickTurn(board, "white", dice, { random: noSlip });
+    const slipped = pickTurn(board, "white", dice, {
+      difficulty: "easy",
+      random: alwaysSlip,
+    });
+
+    expect(slipped).not.toEqual(best);
+    // A slip is a worse choice, never an illegal one.
+    expect(() => validateTurn(board, "white", dice, slipped)).not.toThrow();
+  });
+
+  it("easy still plays best when it doesn't slip", () => {
+    const board = startBoard();
+    const dice: DicePair = [3, 1];
+    expect(
+      pickTurn(board, "white", dice, { difficulty: "easy", random: noSlip }),
+    ).toEqual(pickTurn(board, "white", dice, { random: noSlip }));
+  });
+
+  it("hard never slips, whatever the RNG says", () => {
+    const board = startBoard();
+    const dice: DicePair = [3, 1];
+    expect(
+      pickTurn(board, "white", dice, {
+        difficulty: "hard",
+        random: alwaysSlip,
+      }),
+    ).toEqual(
+      pickTurn(board, "white", dice, { difficulty: "hard", random: noSlip }),
+    );
+  });
+
+  it("easy slips far more often than medium over many turns", () => {
+    // Drive the real slip logic with a deterministic pseudo-random stream
+    // so the rates are checkable without flakiness.
+    let seed = 1;
+    const rng = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    const board = startBoard();
+    const dice: DicePair = [3, 1];
+    const best = pickTurn(board, "white", dice, { random: noSlip });
+
+    const rate = (difficulty: "easy" | "medium") => {
+      let off = 0;
+      for (let i = 0; i < 400; i++) {
+        const t = pickTurn(board, "white", dice, { difficulty, random: rng });
+        if (JSON.stringify(t) !== JSON.stringify(best)) off++;
+      }
+      return off / 400;
+    };
+
+    const easyRate = rate("easy");
+    const mediumRate = rate("medium");
+    expect(easyRate).toBeGreaterThan(mediumRate);
+    expect(easyRate).toBeGreaterThan(0.2);
+    expect(mediumRate).toBeLessThan(0.3);
+  });
+
+  it("every difficulty plays legally across the whole roll matrix", () => {
+    const board = startBoard();
+    for (const difficulty of ["easy", "medium", "hard"] as const) {
+      for (let a = 1; a <= 6; a++) {
+        for (let b = 1; b <= 6; b++) {
+          const dice = [a, b] as DicePair;
+          const moves = pickTurn(board, "white", dice, { difficulty });
+          expect(() =>
+            validateTurn(board, "white", dice, moves),
+          ).not.toThrow();
+        }
+      }
+    }
+  });
+
+  it("hard's lookahead actually changes decisions vs one-ply", () => {
+    // Proof the second ply does work: across the roll matrix from the
+    // start position, hard must disagree with the one-ply pick at least
+    // once. (If it never disagreed, the lookahead would be dead code.)
+    const board = startBoard();
+    let disagreements = 0;
+    for (let a = 1; a <= 6; a++) {
+      for (let b = a; b <= 6; b++) {
+        const dice = [a, b] as DicePair;
+        const onePly = pickTurn(board, "white", dice, { random: noSlip });
+        const twoPly = pickTurn(board, "white", dice, { difficulty: "hard" });
+        expect(() => validateTurn(board, "white", dice, twoPly)).not.toThrow();
+        if (JSON.stringify(onePly) !== JSON.stringify(twoPly)) disagreements++;
+      }
+    }
+    expect(disagreements).toBeGreaterThan(0);
+  });
+
+  it("hard stays fast enough for a live turn", () => {
+    const board = startBoard();
+    const started = Date.now();
+    // Doubles produce the longest candidate lists — the worst case.
+    pickTurn(board, "white", [6, 6], { difficulty: "hard" });
+    pickTurn(board, "white", [3, 3], { difficulty: "hard" });
+    pickTurn(board, "white", [1, 1], { difficulty: "hard" });
+    expect(Date.now() - started).toBeLessThan(2000);
   });
 });

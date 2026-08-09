@@ -1,5 +1,6 @@
 import type {
   BoardState,
+  BotDifficulty,
   Color,
   DicePair,
   Die,
@@ -47,6 +48,7 @@ export interface ReconnectMessage {
  */
 export interface AddBotMessage {
   type: "add_bot";
+  difficulty: BotDifficulty;
 }
 
 export interface StartGameMessage {
@@ -153,6 +155,8 @@ export interface PlayerView {
   connected: boolean;
   /** The computer opponent — never shows a disconnected indicator. */
   isBot: boolean;
+  /** Only present on the bot, so the UI can label how hard it plays. */
+  botDifficulty?: BotDifficulty;
 }
 
 export interface SelfView {

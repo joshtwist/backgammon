@@ -37,7 +37,26 @@ export interface Player {
   connected: boolean;
   /** The computer opponent. Its turns are driven by the server, not a socket. */
   isBot?: boolean;
+  /** Only set on the bot. */
+  botDifficulty?: BotDifficulty;
 }
+
+/**
+ * How hard the computer plays:
+ * - easy   — often picks a random legal turn instead of the best one
+ * - medium — best single-ply heuristic play, with the occasional slip
+ * - hard   — no slips, and looks a move ahead (averages over the
+ *            opponent's 21 possible replies)
+ */
+export type BotDifficulty = "easy" | "medium" | "hard";
+
+export const BOT_DIFFICULTIES: BotDifficulty[] = ["easy", "medium", "hard"];
+
+export const BOT_DIFFICULTY_LABELS: Record<BotDifficulty, string> = {
+  easy: "Easy",
+  medium: "Medium",
+  hard: "Hard",
+};
 
 /** Fixed identity of the computer opponent (only ever one per game). */
 export const BOT_PLAYER_ID = "bot";
@@ -152,6 +171,9 @@ export interface SeriesSeedEntry {
   icon: PlayerIcon;
   color: Color;
   score: number;
+  /** Lets a rematch re-seat the computer automatically, same difficulty. */
+  isBot?: boolean;
+  botDifficulty?: BotDifficulty;
 }
 
 /**

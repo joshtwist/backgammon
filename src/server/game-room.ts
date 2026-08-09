@@ -1,7 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
-import { PLAYER_ICONS } from "../shared/types.ts";
+import { BOT_DIFFICULTIES, PLAYER_ICONS } from "../shared/types.ts";
 import type {
   BoardState,
+  BotDifficulty,
   Color,
   DicePair,
   Die,
@@ -21,6 +22,7 @@ import {
   buildSeed,
   isBotTurn,
   passNoMoves,
+  reseatSeededBot,
   rollDice,
   rollOpeningDie,
   seedGame,
@@ -393,7 +395,9 @@ export class GameRoom extends DurableObject<Env> {
 
     if (state.turn.phase !== "move" || !state.turn.dice) return;
 
-    const moves = pickTurn(state.board, bot.color, state.turn.dice);
+    const moves = pickTurn(state.board, bot.color, state.turn.dice, {
+      difficulty: bot.botDifficulty,
+    });
     const turnNumber = state.turnNumber;
 
     // Show the chosen moves as a live preview first — this reuses the same
@@ -425,7 +429,9 @@ export class GameRoom extends DurableObject<Env> {
     const finalMoves =
       fresh.board === state.board
         ? moves
-        : pickTurn(fresh.board, bot.color, fresh.turn.dice!);
+        : pickTurn(fresh.board, bot.color, fresh.turn.dice!, {
+            difficulty: bot.botDifficulty,
+          });
 
     const next = this.withCelebration(
       confirmTurn(fresh, bot.playerId, finalMoves),
@@ -490,7 +496,7 @@ export class GameRoom extends DurableObject<Env> {
         return;
 
       case "add_bot":
-        await this.handleAddBot(ws);
+        await this.handleAddBot(ws, msg.difficulty);
         return;
 
       case "start_game":
@@ -545,6 +551,9 @@ export class GameRoom extends DurableObject<Env> {
     let state = await this.loadState();
     // The socket is already tagged with this playerId from fetch().
     state = addPlayer(state, playerId, String(name), icon as PlayerIcon);
+    // A rematch of a game against the computer re-seats it automatically,
+    // at the same difficulty, so a series continues without re-adding it.
+    state = reseatSeededBot(state);
     await this.saveState(state);
 
     // Broadcast personalised state to everyone (including the joiner).
@@ -586,11 +595,17 @@ export class GameRoom extends DurableObject<Env> {
     return playerId;
   }
 
-  private async handleAddBot(ws: WebSocket): Promise<void> {
+  private async handleAddBot(
+    ws: WebSocket,
+    difficulty: unknown,
+  ): Promise<void> {
     // Only a player already in the lobby can fill the empty seat.
     this.requirePlayerId(ws);
+    if (!BOT_DIFFICULTIES.includes(difficulty as BotDifficulty)) {
+      throw new Error("Unknown difficulty");
+    }
     let state = await this.loadState();
-    state = addBot(state);
+    state = addBot(state, difficulty as BotDifficulty);
     await this.saveState(state);
     this.broadcastState(state);
   }

@@ -10,6 +10,7 @@ import {
 } from "../types.ts";
 import type {
   BoardState,
+  BotDifficulty,
   Color,
   DicePair,
   Die,
@@ -156,7 +157,10 @@ export function addPlayer(
  * (`activePlayerOrThrow`) and the exactly-2-players start gate work
  * unchanged — the DO drives its turns via an alarm instead of a socket.
  */
-export function addBot(state: GameState): GameState {
+export function addBot(
+  state: GameState,
+  difficulty: BotDifficulty = "medium",
+): GameState {
   if (state.phase !== "lobby") {
     throw new Error("Cannot add a computer: the game has already started");
   }
@@ -184,9 +188,25 @@ export function addBot(state: GameState): GameState {
     color,
     connected: true,
     isBot: true,
+    botDifficulty: difficulty,
   };
 
   return { ...state, players: [...state.players, bot] };
+}
+
+/**
+ * Re-seat the computer in a rematch, at the same difficulty, as soon as
+ * the human has joined — so a series against the computer continues with
+ * one tap instead of re-adding it every game.
+ */
+export function reseatSeededBot(state: GameState): GameState {
+  if (state.phase !== "lobby" || !state.seed) return state;
+  if (state.players.length !== 1 || state.players.some((p) => p.isBot)) {
+    return state;
+  }
+  const entry = state.seed.entries.find((e) => e.isBot);
+  if (!entry) return state;
+  return addBot(state, entry.botDifficulty ?? "medium");
 }
 
 /** The computer opponent, if this game has one. */
@@ -463,6 +483,7 @@ export function buildSeed(state: GameState): SeriesSeed {
       icon: p.icon,
       color: p.color,
       score: state.series[p.color],
+      ...(p.isBot ? { isBot: true, botDifficulty: p.botDifficulty } : {}),
     })),
   };
 }

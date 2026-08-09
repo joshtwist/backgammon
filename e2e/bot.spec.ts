@@ -44,6 +44,38 @@ test.describe("Computer opponent", () => {
     await ctx.close();
   });
 
+  test("difficulty can be chosen and is shown on the opponent", async ({
+    browser,
+  }) => {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    attachErrorLogging(page, "P1");
+
+    await createGame(page);
+    await joinAs(page, "Josh", "rocket");
+
+    // Medium is the default; switch to Hard before seating the computer.
+    await expect(page.getByTestId("difficulty-medium")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await page.getByTestId("difficulty-hard").click();
+    await page.getByTestId("add-bot-btn").click();
+
+    await expect(page.getByTestId("bot-difficulty")).toHaveText("(Hard)");
+
+    // The label follows through into the game.
+    await page.getByTestId("start-game-btn").click();
+    await expect(page.getByTestId("opening-roll-btn")).toBeVisible();
+    await forceRolls(page, [6, 2]);
+    await page.getByTestId("opening-roll-btn").click();
+    await expect(page.getByTestId("hud-opponent")).toContainText("(Hard)", {
+      timeout: 10_000,
+    });
+
+    await ctx.close();
+  });
+
   test("the computer takes its turn after the human confirms", async ({
     browser,
   }) => {

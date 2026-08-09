@@ -1,5 +1,11 @@
 import { BAR, OFF } from "../shared/types.ts";
-import type { BoardState, Color, DicePair, Move } from "../shared/types.ts";
+import type {
+  BoardState,
+  BotDifficulty,
+  Color,
+  DicePair,
+  Move,
+} from "../shared/types.ts";
 import { applyMoves, mirror, other, pipCount } from "../shared/engine/board.ts";
 import { enumerateTurns } from "../shared/engine/moves.ts";
 
@@ -147,30 +153,126 @@ function hitValue(before: BoardState, after: BoardState, color: Color): number {
   return hits * 25 * W.hit;
 }
 
+/** Score one candidate turn by the static evaluation (single ply). */
+function scoreTurn(board: BoardState, color: Color, turn: Move[]): number {
+  const after = applyMoves(board, color, turn);
+  return evaluate(after, color) + hitValue(board, after, color);
+}
+
+/** Candidates ranked best-first by the static evaluation. */
+function rankTurns(
+  board: BoardState,
+  color: Color,
+  turns: Move[][],
+): { turn: Move[]; score: number }[] {
+  return turns
+    .map((turn) => ({ turn, score: scoreTurn(board, color, turn) }))
+    .sort((a, b) => b.score - a.score);
+}
+
+/**
+ * The 21 distinct rolls of two dice, with their probability. Doubles come
+ * up one way in 36, every other combination two ways.
+ */
+const ALL_ROLLS: { dice: DicePair; p: number }[] = (() => {
+  const rolls: { dice: DicePair; p: number }[] = [];
+  for (let a = 1; a <= 6; a++) {
+    for (let b = a; b <= 6; b++) {
+      rolls.push({ dice: [a, b] as DicePair, p: (a === b ? 1 : 2) / 36 });
+    }
+  }
+  return rolls;
+})();
+
+/** How many top candidates get the (much costlier) two-ply treatment. */
+const TWO_PLY_WIDTH = 8;
+
+/**
+ * Two-ply evaluation: play `turn`, then for each of the opponent's 21
+ * possible rolls assume they answer with their best single-ply reply, and
+ * average the resulting position (from our side) weighted by how likely
+ * each roll is.
+ *
+ * This is what lets Hard avoid blots that specifically get punished — a
+ * single-ply bot can't see the return shot at all, it only knows the
+ * generic blot penalty.
+ */
+function twoPlyScore(board: BoardState, color: Color, turn: Move[]): number {
+  const after = applyMoves(board, color, turn);
+  const foe = other(color);
+
+  let total = 0;
+  for (const { dice, p } of ALL_ROLLS) {
+    const replies = enumerateTurns(after, foe, dice);
+    let worst = Infinity; // worst for us = best for them
+    for (const reply of replies) {
+      const resulting = applyMoves(after, foe, reply);
+      const ourScore = evaluate(resulting, color) - hitValue(after, resulting, foe);
+      if (ourScore < worst) worst = ourScore;
+    }
+    total += p * (worst === Infinity ? evaluate(after, color) : worst);
+  }
+  return total;
+}
+
+export interface PickOptions {
+  difficulty?: BotDifficulty;
+  /** Injectable for deterministic tests; defaults to Math.random. */
+  random?: () => number;
+}
+
+/**
+ * How often each difficulty throws away the best play and picks a random
+ * legal one instead — the "missed option" a human makes.
+ */
+const SLIP_CHANCE: Record<BotDifficulty, number> = {
+  easy: 0.45,
+  medium: 0.12,
+  hard: 0,
+};
+
 /**
  * Choose the turn to play. Returns a legal, maximal move sequence (empty
- * on a dance). Deterministic: ties break toward the first sequence
- * `enumerateTurns` produced, which is stable for a given position.
+ * on a dance) — always legal at every difficulty; weaker settings pick a
+ * worse legal turn, never an invalid one.
+ *
+ * Deterministic on hard (and on medium/easy given a fixed `random`).
  */
 export function pickTurn(
   board: BoardState,
   color: Color,
   dice: DicePair,
+  options: PickOptions = {},
 ): Move[] {
+  const difficulty = options.difficulty ?? "medium";
+  const random = options.random ?? Math.random;
+
   const turns = enumerateTurns(board, color, dice);
   if (turns.length <= 1) return turns[0] ?? [];
 
-  let best = turns[0];
-  let bestScore = -Infinity;
+  // The slip: play a random legal turn instead of thinking. This is what
+  // makes easy beatable — it still never plays illegally, it just misses.
+  const slip = SLIP_CHANCE[difficulty];
+  if (slip > 0 && random() < slip) {
+    return turns[Math.floor(random() * turns.length)] ?? turns[0];
+  }
 
-  for (const turn of turns) {
-    const after = applyMoves(board, color, turn);
-    const score = evaluate(after, color) + hitValue(board, after, color);
+  const ranked = rankTurns(board, color, turns);
+
+  if (difficulty !== "hard") return ranked[0].turn;
+
+  // Hard: re-score the most promising candidates a move deeper. Narrowing
+  // to the top few first keeps this well inside a few hundred ms even on
+  // doubles, where the candidate list gets long.
+  const shortlist = ranked.slice(0, TWO_PLY_WIDTH);
+  let best = shortlist[0].turn;
+  let bestScore = -Infinity;
+  for (const { turn } of shortlist) {
+    const score = twoPlyScore(board, color, turn);
     if (score > bestScore) {
       bestScore = score;
       best = turn;
     }
   }
-
   return best;
 }

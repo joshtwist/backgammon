@@ -2,7 +2,7 @@ import { motion } from "framer-motion";
 import type { BoardState, Color } from "../../shared/types.ts";
 import type { PlayerView } from "../../shared/protocol.ts";
 import { pipCount } from "../../shared/engine/board.ts";
-import { OFF } from "../../shared/types.ts";
+import { BOT_DIFFICULTY_LABELS, OFF } from "../../shared/types.ts";
 import { ICON_MAP, ICON_COLORS } from "../lib/icons.ts";
 import { PLAYER_ICONS } from "../../shared/types.ts";
 
@@ -58,6 +58,11 @@ export function PlayerHUD({
         <div className="font-semibold text-sm truncate flex items-center gap-1.5">
           {player.name}
           {isYou && <span className="text-slate-400 font-normal">(you)</span>}
+          {player.isBot && player.botDifficulty && (
+            <span className="text-slate-400 font-normal">
+              ({BOT_DIFFICULTY_LABELS[player.botDifficulty]})
+            </span>
+          )}
           <span
             className={`inline-block w-3.5 h-3.5 rounded-full border ${
               player.color === "white"
