@@ -15,6 +15,7 @@ import {
   winKindOf,
 } from "./game.ts";
 import type { GameState } from "./game.ts";
+import { enumerateTurns } from "./moves.ts";
 import { pos } from "./testkit.ts";
 
 function lobbyWithTwo(): GameState {
@@ -248,5 +249,54 @@ describe("rematch & series seeding", () => {
     next = addPlayer(next, "someone-new", "Max", "dog"); // takes white
     expect(next.series.white).toBe(0);
     expect(next.series.black).toBe(3);
+  });
+});
+
+describe("dice tally", () => {
+  it("counts every die rolled, per side, and flags doubles", () => {
+    let s = createGame("g");
+    s = addPlayer(s, "a", "Josh", "rocket");
+    s = addPlayer(s, "b", "Anna", "cat");
+    s = startGame(s, "a");
+
+    // Opening: white 6, black 2 -> white opens and plays [6,2].
+    s = rollOpeningDie(s, "a", 6);
+    s = rollOpeningDie(s, "b", 2);
+
+    // Each opening die is credited to whoever rolled it, and doesn't
+    // count as a two-dice "roll". White then PLAYS both opening dice, but
+    // they aren't re-tallied — only one of them was white's own throw.
+    expect(s.diceStats.white.faces[6]).toBe(1);
+    expect(s.diceStats.black.faces[2]).toBe(1);
+    expect(s.diceStats.white.faces[2]).toBe(0);
+    expect(s.diceStats.white.rolls).toBe(0);
+
+    const whiteBefore = s.diceStats.white.faces[6];
+    // Play out white's opening turn so the roll passes to black.
+    s = confirmTurn(s, "a", enumerateTurns(s.board, "white", [6, 2])[0]);
+
+    // Black rolls doubles.
+    s = rollDice(s, "b", [4, 4]);
+    expect(s.diceStats.black.faces[4]).toBe(2);
+    expect(s.diceStats.black.rolls).toBe(1);
+    expect(s.diceStats.black.doubles).toBe(1);
+    // White's tally untouched by black's roll.
+    expect(s.diceStats.white.faces[6]).toBe(whiteBefore);
+  });
+
+  it("carries the tally across a rematch via the seed", () => {
+    let s = createGame("g");
+    s = addPlayer(s, "a", "Josh", "rocket");
+    s = addPlayer(s, "b", "Anna", "cat");
+    s = startGame(s, "a");
+    s = rollOpeningDie(s, "a", 5);
+    s = rollOpeningDie(s, "b", 3);
+
+    const seed = buildSeed(s);
+    expect(seed.diceStats?.white.faces[5]).toBe(1);
+
+    const next = seedGame("g2", seed);
+    expect(next.diceStats.white.faces[5]).toBe(1);
+    expect(next.diceStats.black.faces[3]).toBe(1);
   });
 });

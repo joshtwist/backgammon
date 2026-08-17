@@ -7,11 +7,13 @@ import {
   OFF,
   PLAYER_ICONS,
   WIN_POINTS,
+  emptyDiceStats,
 } from "../types.ts";
 import type {
   BoardState,
   BotDifficulty,
   Color,
+  DiceStats,
   DicePair,
   Die,
   GamePhase,
@@ -49,6 +51,24 @@ export interface GameState {
   seed: SeriesSeed | null;
   rematch: RematchInfo | null;
   celebrationGif: string | null;
+  /** Running tally of every die rolled, per side. See DiceStats. */
+  diceStats: DiceStats;
+}
+
+/** Record one player's roll (one or two dice) into the tally. */
+function tally(stats: DiceStats, color: Color, dice: Die[]): DiceStats {
+  const prev = stats[color];
+  const faces = [...prev.faces];
+  for (const d of dice) faces[d]++;
+  const isPair = dice.length === 2;
+  return {
+    ...stats,
+    [color]: {
+      faces,
+      rolls: prev.rolls + (isPair ? 1 : 0),
+      doubles: prev.doubles + (isPair && dice[0] === dice[1] ? 1 : 0),
+    },
+  };
 }
 
 // ── Creation & lobby ───────────────────────────────────────────────
@@ -69,6 +89,7 @@ export function createGame(gameId: string): GameState {
     seed: null,
     rematch: null,
     celebrationGif: null,
+    diceStats: emptyDiceStats(),
   };
 }
 
@@ -80,6 +101,7 @@ export function seedGame(gameId: string, seed: SeriesSeed): GameState {
   return {
     ...state,
     seed,
+    diceStats: seed.diceStats ?? state.diceStats,
     series: {
       white: scoreFor("white"),
       black: scoreFor("black"),
@@ -283,16 +305,21 @@ export function rollOpeningDie(
     throw new Error("You have already rolled");
   }
 
+  // Opening dice count toward the face tally too (but not as a "roll",
+  // since it's a single die and can't be a double).
+  const diceStats = tally(state.diceStats, player.color, [die]);
+
   const rolls = { ...state.opening.rolls, [player.color]: die };
   const { white, black } = rolls;
 
   if (white === null || black === null) {
-    return { ...state, opening: { ...state.opening, rolls } };
+    return { ...state, diceStats, opening: { ...state.opening, rolls } };
   }
 
   if (white === black) {
     return {
       ...state,
+      diceStats,
       opening: {
         rolls: { white: null, black: null },
         lastTie: white,
@@ -307,6 +334,7 @@ export function rollOpeningDie(
 
   return {
     ...state,
+    diceStats,
     phase: "playing",
     opening: null,
     turnNumber: 1,
@@ -349,6 +377,7 @@ export function rollDice(
   return {
     ...state,
     turnNumber: state.turnNumber + 1,
+    diceStats: tally(state.diceStats, turn.color, dice),
     turn: {
       ...turn,
       phase: analysis.maxPlayable === 0 ? "no_moves" : "move",
@@ -478,6 +507,7 @@ export function buildSeed(state: GameState): SeriesSeed {
   return {
     fromGameId: state.gameId,
     gamesPlayed: state.series.gamesPlayed,
+    diceStats: state.diceStats,
     entries: state.players.map((p) => ({
       name: p.name,
       icon: p.icon,

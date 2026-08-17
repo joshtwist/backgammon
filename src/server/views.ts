@@ -49,6 +49,7 @@ export function getPlayerView(
     lastTurn: state.lastTurn,
     series: state.series,
     seeded: state.seed !== null,
+    diceStats: state.diceStats,
     rematch: state.rematch,
   };
 }

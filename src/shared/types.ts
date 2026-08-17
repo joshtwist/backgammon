@@ -166,6 +166,31 @@ export interface Series {
   gamesPlayed: number;
 }
 
+/**
+ * Tally of every die actually rolled, per side. Exists so fairness is
+ * checkable from real games rather than taken on trust: both sides draw
+ * from the identical generator, so over a series these should converge on
+ * ~16.7% per face and ~1/6 doubles for each player.
+ */
+export interface DiceTally {
+  /** Index 1..6 = how many times that face came up. Index 0 unused. */
+  faces: number[];
+  /** Number of two-dice rolls (opening single-die rolls count as 0). */
+  rolls: number;
+  /** How many of those rolls were doubles. */
+  doubles: number;
+}
+
+export type DiceStats = Record<Color, DiceTally>;
+
+export function emptyDiceTally(): DiceTally {
+  return { faces: [0, 0, 0, 0, 0, 0, 0], rolls: 0, doubles: 0 };
+}
+
+export function emptyDiceStats(): DiceStats {
+  return { white: emptyDiceTally(), black: emptyDiceTally() };
+}
+
 export interface SeriesSeedEntry {
   name: string;
   icon: PlayerIcon;
@@ -185,6 +210,8 @@ export interface SeriesSeed {
   fromGameId: string;
   gamesPlayed: number;
   entries: SeriesSeedEntry[];
+  /** Carried so the dice tally keeps growing across a series. */
+  diceStats?: DiceStats;
 }
 
 export interface RematchInfo {

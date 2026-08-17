@@ -2,6 +2,7 @@ import type {
   BoardState,
   BotDifficulty,
   Color,
+  DiceStats,
   DicePair,
   Die,
   GamePhase,
@@ -214,6 +215,8 @@ export interface StateMessage {
   series: Series;
   /** True when this game continues a series (was seeded by a rematch). */
   seeded: boolean;
+  /** Running per-side dice tally, so fairness is checkable from real play. */
+  diceStats: DiceStats;
   /**
    * Present on completed games once any player has opened a rematch.
    * When it flips from null to an object, the win screen swaps its CTA

@@ -10,7 +10,7 @@ import {
 } from "react";
 import { motion, AnimatePresence, useAnimationControls } from "framer-motion";
 import type { PanInfo } from "framer-motion";
-import { RotateCw } from "lucide-react";
+import { RotateCw, Dices } from "lucide-react";
 import { BAR, OFF } from "../../shared/types.ts";
 import type { Color, DicePair, Move } from "../../shared/types.ts";
 import type { ClientMessage, StateMessage } from "../../shared/protocol.ts";
@@ -23,6 +23,7 @@ import {
 } from "../lib/impatience.ts";
 import { preloadHitGifs, reactionGif } from "../lib/hitgifs.ts";
 import { Checker } from "./Checker.tsx";
+import { DiceAudit } from "./DiceAudit.tsx";
 import { DiceTray } from "./DiceTray.tsx";
 import { PlayerHUD } from "./PlayerHUD.tsx";
 
@@ -211,6 +212,7 @@ export function GameBoard({ state, send }: GameBoardProps) {
   // ── Impatience nudge: 5s idle (not rolling OR not moving) → a GIF ──
 
   const [nudgeGif, setNudgeGif] = useState<string | null>(null);
+  const [showAudit, setShowAudit] = useState(false);
   useEffect(() => {
     preloadImpatientGifs();
   }, []);
@@ -449,6 +451,16 @@ export function GameBoard({ state, send }: GameBoardProps) {
         </div>
         <button
           type="button"
+          data-testid="dice-audit-btn"
+          onClick={() => setShowAudit(true)}
+          aria-label="Dice audit"
+          title="Dice audit"
+          className="mr-1 p-2 rounded-lg border border-slate-700 bg-slate-800/60 text-slate-300 hover:bg-slate-700 transition-colors cursor-pointer"
+        >
+          <Dices className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
           data-testid="flip-board-btn"
           onClick={toggleFlip}
           aria-label="Flip board"
@@ -651,6 +663,12 @@ export function GameBoard({ state, send }: GameBoardProps) {
         onUndo={pending.undo}
         onConfirm={pending.confirm}
       />
+
+      <AnimatePresence>
+        {showAudit && (
+          <DiceAudit state={state} onClose={() => setShowAudit(false)} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
