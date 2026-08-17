@@ -25,8 +25,13 @@ import { enumerateTurns } from "../shared/engine/moves.ts";
 
 /** Weights, in "pips" so everything trades off against raw race progress. */
 const W = {
-  /** Sending an opponent checker back — scaled by how far it must re-travel. */
-  hit: 1.1,
+  /**
+   * Tempo gained by a hit, ON TOP of the ground it already costs them
+   * (which the pip differential counts on its own).
+   */
+  hit: 4,
+  /** ...plus this per home point made, since re-entry gets harder. */
+  hitHomeBoard: 3,
   /** Owning a point (2+ checkers) — blocks the opponent. */
   point: 3,
   /** Home-board points are worth more (they build a blocking prime). */
@@ -144,13 +149,34 @@ function nearestAttackerDistance(
   return 0;
 }
 
-/** How much material this turn sends back, weighted by re-entry distance. */
+/**
+ * The value of a hit BEYOND the ground it costs the opponent.
+ *
+ * The raw damage is already counted by the pip differential in
+ * `evaluate`: hitting a blot on my point p sends that checker to the bar,
+ * costing them exactly p pips — so a hit near their home is worth many
+ * times one deep in mine, automatically. Adding a flat bonus on top (as
+ * this used to) made every hit look equally great and hitting in general
+ * look far better than it is, so the bot grabbed pointless hits and broke
+ * its own points to do it.
+ *
+ * What the pip count *doesn't* capture is tempo: they must enter before
+ * they can do anything else, and against a strong home board they may not
+ * enter at all. That's what this scores, so it scales with how many home
+ * points are made rather than with a constant.
+ */
 function hitValue(before: BoardState, after: BoardState, color: Color): number {
   const foe = other(color);
   const hits = after[foe][BAR] - before[foe][BAR];
   if (hits <= 0) return 0;
-  // A checker sent back from deep in my home board loses the most ground.
-  return hits * 25 * W.hit;
+
+  const own = after[color];
+  let homePoints = 0;
+  for (let p = 1; p <= 6; p++) {
+    if (own[p] >= 2) homePoints++;
+  }
+
+  return hits * (W.hit + homePoints * W.hitHomeBoard);
 }
 
 /** Score one candidate turn by the static evaluation (single ply). */

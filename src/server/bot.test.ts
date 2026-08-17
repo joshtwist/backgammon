@@ -251,3 +251,36 @@ describe("difficulty", () => {
     expect(Date.now() - started).toBeLessThan(2000);
   });
 });
+
+describe("hit appetite", () => {
+  it("declines a worthless hit that would break a made point", () => {
+    // Black's blot sits on white's 2 point, so hitting it costs black a
+    // mere 2 pips — but 6/2* breaks white's made 6 point and leaves two
+    // blots. Sound play declines. (The old flat per-hit bonus took it.)
+    const board = pos(
+      { 6: 2, 8: 3, 13: 5, 24: 2, 5: 3 },
+      { 23: 1, 6: 5, 8: 3, 13: 6 },
+    );
+    const dice: DicePair = [4, 1];
+    const moves = pickTurn(board, "white", dice, { random: noSlip });
+    const after = applyMoves(board, "white", moves);
+
+    expect(() => validateTurn(board, "white", dice, moves)).not.toThrow();
+    expect(after.black[BAR]).toBe(0); // didn't take the junk hit
+    expect(after.white[6]).toBe(2); // kept the point
+  });
+
+  it("still takes a hit that actually costs the opponent ground", () => {
+    // The mirror case: black's blot is nearly home (its 5 point = white's
+    // 20), so hitting it with 24/20* sets black back a full 20 pips. That
+    // hit is worth taking, and the retune must not have killed it.
+    const board = pos(
+      { 24: 2, 13: 5, 8: 3, 6: 5 },
+      { 5: 1, 6: 5, 8: 3, 13: 6 },
+    );
+    const dice: DicePair = [4, 3];
+    const moves = pickTurn(board, "white", dice, { random: noSlip });
+    const after = applyMoves(board, "white", moves);
+    expect(after.black[BAR]).toBe(1);
+  });
+});
